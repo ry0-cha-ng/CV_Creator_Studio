@@ -5,6 +5,7 @@ import cvLogoUrl from '../../resources/brand/cv-logo.png';
 import { AI_HELP, AI_PROVIDER_LABELS, type AiPlanUsage, type AiProviderChoice, type AiStatus } from '../../shared/ai';
 import { ANALYTICS_SCREENS, type AnalyticsScreenId } from '../../shared/analytics-screens';
 import { AiHelp } from '../ai/AiAssist';
+import { YoutubeSettings } from './YoutubeSettings';
 
 export const AppNav = ({
   area,
@@ -147,6 +148,7 @@ export const AppNav = ({
             />
             投稿の24時間後にも確認タスクを作る
           </label>
+          <YoutubeSettings />
           <AiHelp id="settings" />
         </div>
       )}

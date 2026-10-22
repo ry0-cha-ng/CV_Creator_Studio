@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { deliveryPresetIdSchema } from '../delivery-presets';
+import { contentTypeSourceSchema, importOriginSchema, youtubeContentTypeSchema } from './youtube';
 
 const analyticsLangSchema = z.enum(['ja', 'en']);
 const analyticsHookSchema = z.enum([
@@ -157,12 +158,20 @@ export type PostContent = z.infer<typeof postContentSchema>;
 
 export const analyticsPostSchema = z.object({
   id: z.string(),
-  projectId: z.string(),
-  preset: deliveryPresetIdSchema,
+  /** YouTubeから取り込んだCVCS外の動画では未設定。架空のProjectは作らない。 */
+  projectId: z.string().optional(),
+  preset: deliveryPresetIdSchema.optional(),
   platform: z.enum(['youtube', 'tiktok', 'x']),
-  lang: analyticsLangSchema,
+  lang: analyticsLangSchema.optional(),
   url: z.string().default(''),
+  /** 投稿記録の日時（手入力・投稿運用）。APIの公開日時は apiPublishedAt に別で持つ。 */
   postedAt: z.string(),
+  importOrigin: importOriginSchema.default('cvcs'),
+  youtubeVideoId: z.string().optional(),
+  channelId: z.string().optional(),
+  apiPublishedAt: z.string().optional(),
+  contentType: youtubeContentTypeSchema.optional(),
+  contentTypeSource: contentTypeSourceSchema.optional(),
   basename: z.string().optional(),
   utmContent: z.string().optional(),
   templateId: z.string(),

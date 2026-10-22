@@ -252,7 +252,7 @@ export const comparisonCohort = (
     .slice(0, limit);
   const platform =
     post.platform === 'youtube' ? 'YouTube' : post.platform === 'tiktok' ? 'TikTok' : 'X';
-  const lang = post.lang === 'en' ? 'English' : '日本語';
+  const lang = langLabel(post.lang);
   return {
     label: `${series} · ${platform} ${lang} の直近${limit}本の平均（n=${peers.length}）`,
     count: peers.length,
@@ -312,7 +312,7 @@ export const ctaTypeLabel = (
 
 export const attributesOf = (post: AnalyticsPost): AttributeMap => ({
   map: post.content.map,
-  lang: post.lang === 'en' ? 'English' : '日本語',
+  lang: langLabel(post.lang),
   hook: HOOK_PATTERN_LABELS[post.hookPattern],
   opening: post.openingType ? OPENING_LABELS[post.openingType] : '未設定',
   length: post.durationSec ? `${Math.round(post.durationSec)}秒` : post.content.durationLabel || '未設定',
@@ -548,7 +548,8 @@ export const platformLabel = (platform: string): string => {
   return 'X';
 };
 
-export const langLabel = (lang: string): string => (lang === 'en' ? 'English' : '日本語');
+export const langLabel = (lang: string | undefined): string =>
+  lang === 'en' ? 'English' : lang === 'ja' ? '日本語' : '言語未設定';
 
 export const presetLanguageLabel = (preset: DeliveryPresetId): string => DELIVERY_PRESETS[preset].label;
 

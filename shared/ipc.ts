@@ -12,6 +12,7 @@ import type { PublishingSettings, PublishingView, StudioNextAction, WorkflowTask
 import type { InheritItem, Project } from './schema/project';
 import type { SceneKey } from './schema/project-keys';
 import type { VideoStructureTemplate } from './video-structure';
+import type { SyncRun, YoutubeStatus, YoutubeSyncProgress, YoutubeSyncSettings } from './schema/youtube';
 import type {
   AudioRegistration,
   AudioTrack,
@@ -198,4 +199,13 @@ export interface StudioApi {
   cancelAi(): Promise<void>;
   parseAiHandoff(request: AiHandoffParseRequest): Promise<AiGenerateResult>;
   onExportProgress(callback: (progress: ExportProgress) => void): () => void;
+  getYoutubeStatus(): Promise<YoutubeStatus>;
+  setYoutubeClient(clientId: string, clientSecret?: string): Promise<YoutubeStatus>;
+  connectYoutube(): Promise<YoutubeStatus>;
+  cancelYoutubeLogin(): Promise<void>;
+  disconnectYoutube(): Promise<YoutubeStatus>;
+  setYoutubeSettings(patch: Partial<YoutubeSyncSettings>): Promise<YoutubeStatus>;
+  syncYoutube(): Promise<SyncRun>;
+  cancelYoutubeSync(): Promise<void>;
+  onYoutubeProgress(callback: (progress: YoutubeSyncProgress) => void): () => void;
 }

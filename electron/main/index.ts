@@ -8,6 +8,7 @@ import {
   dialog,
   ipcMain,
   protocol,
+  safeStorage,
   shell,
 } from 'electron';
 import { applySceneDurationDefaults, defaultBgmPlacement } from '../../shared/timeline';
@@ -21,7 +22,10 @@ import { LibraryService } from './services/library-service';
 import { MediaService } from './services/media-service';
 import { ProjectService } from './services/project-service';
 import { PublishingService } from './services/publishing-service';
-import { DEFAULT_WORKSPACE } from './services/studio-settings';
+import { DEFAULT_WORKSPACE, patchStudioSettings, readStudioSettings } from './services/studio-settings';
+import { asYoutubeError } from './services/youtube-error';
+import { YoutubeService } from './services/youtube-service';
+import { youtubeSyncSettingsSchema } from '../../shared/schema/youtube';
 import { dueAtFor7d } from '../../shared/analytics';
 import { publishingSettingsSchema, type PublishingView, type StudioNextAction } from '../../shared/publishing';
 import type { Project } from '../../shared/schema/project';
@@ -52,6 +56,24 @@ const publishingService = new PublishingService(
   (projectId, preset) => analyticsService.has7d(projectId, preset),
   (id) => libraryService.getAudio(id),
 );
+const youtubeService = new YoutubeService({
+  directory: app.getPath('userData'),
+  box: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (plain) => safeStorage.encryptString(plain),
+    decrypt: (cipher) => safeStorage.decryptString(cipher),
+  },
+  openExternal: (url) => shell.openExternal(url),
+  analytics: analyticsService,
+  hasWorkspace: () => Boolean(projectService.getWorkspace()),
+  readSettings: async () => (await readStudioSettings()).youtubeSync,
+  writeSettings: async (youtubeSync) => {
+    await patchStudioSettings({ youtubeSync });
+  },
+  onProgress: (progress) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('youtube:progress', progress);
+  },
+});
 const aiService = new AiService();
 const exportService = new ExportService(
   () => projectService.getWorkspace(),
@@ -200,6 +222,7 @@ const registerIpc = (): void => {
       properties: ['openDirectory', 'createDirectory'],
     });
     if (result.canceled || !result.filePaths[0]) return null;
+    youtubeService.cancelSync();
     await projectService.setWorkspace(result.filePaths[0]);
     libraryService.initialize();
     analyticsService.initialize();
@@ -326,7 +349,7 @@ const registerIpc = (): void => {
     analyticsService.saveSnapshot(input.postId, input.ageBucket, input.capturedAt, input.values);
     if (input.ageBucket === '7d') {
       const post = analyticsService.bundle().posts.find((item) => item.id === input.postId);
-      if (post) {
+      if (post?.projectId) {
         const project = await projectService.loadProject(post.projectId);
         const log = project.posts.find((item) => item.preset === post.preset);
         if (log) {
@@ -452,6 +475,28 @@ const registerIpc = (): void => {
       chip: '制作',
     };
   });
+  const youtube = async <T>(task: () => Promise<T>): Promise<T> => {
+    try {
+      return await task();
+    } catch (error) {
+      throw new Error(asYoutubeError(error).message);
+    }
+  };
+  ipcMain.handle('youtube:status', () => youtube(() => youtubeService.status()));
+  ipcMain.handle('youtube:set-client', (_event, clientId: unknown, clientSecret: unknown) => {
+    if (typeof clientId !== 'string') throw new Error('クライアントIDが不正です');
+    return youtube(() =>
+      youtubeService.setClient(clientId, typeof clientSecret === 'string' ? clientSecret : undefined),
+    );
+  });
+  ipcMain.handle('youtube:connect', () => youtube(() => youtubeService.connect()));
+  ipcMain.handle('youtube:cancel-login', () => youtubeService.cancelLogin());
+  ipcMain.handle('youtube:disconnect', () => youtube(() => youtubeService.disconnect()));
+  ipcMain.handle('youtube:set-settings', (_event, patch: unknown) =>
+    youtube(() => youtubeService.setSettings(youtubeSyncSettingsSchema.partial().parse(patch))),
+  );
+  ipcMain.handle('youtube:sync', () => youtube(() => youtubeService.startSync('manual')));
+  ipcMain.handle('youtube:cancel-sync', () => youtubeService.cancelSync());
   ipcMain.handle('ai:status', () => aiService.status());
   ipcMain.handle('ai:usage', () => aiService.planUsage());
   ipcMain.handle('ai:set-provider', (_event, provider: unknown) => {
@@ -487,6 +532,9 @@ app.whenReady().then(async () => {
   });
   registerIpc();
   createWindow();
+  setTimeout(() => {
+    youtubeService.syncOnStartup().catch(() => undefined);
+  }, 5_000);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

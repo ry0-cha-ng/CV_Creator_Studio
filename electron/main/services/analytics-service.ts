@@ -34,9 +34,27 @@ import {
   type MetricSnapshot,
 } from '../../../shared/schema/analytics';
 import type { Project } from '../../../shared/schema/project';
+import { youtubeVideoSchema, type YoutubeVideo } from '../../../shared/schema/youtube';
+import { youtubeVideoIdFromUrl } from '../../../shared/post-url';
 import { activeTimeline } from '../../../shared/timeline';
+import { runStudioMigrations } from './studio-db-migrations';
 
 type Row = { id: string; data: string };
+
+const apiFieldsOf = (video: YoutubeVideo | undefined): Partial<AnalyticsPost> =>
+  video
+    ? {
+        channelId: video.channelId,
+        apiPublishedAt: video.publishedAt,
+        contentType: video.contentType,
+        contentTypeSource: video.contentTypeSource,
+      }
+    : {};
+
+const importedUrl = (video: YoutubeVideo): string =>
+  video.contentType === 'SHORTS'
+    ? `https://youtube.com/shorts/${video.videoId}`
+    : `https://youtube.com/watch?v=${video.videoId}`;
 
 const snapshotSignature = (snapshot: MetricSnapshot): string =>
   JSON.stringify({
@@ -125,6 +143,12 @@ export class AnalyticsService {
         data TEXT NOT NULL
       );
     `);
+    runStudioMigrations(this.database, workspace);
+  }
+
+  db(): DatabaseSync {
+    this.ensure();
+    return this.database!;
   }
 
   applyAdoptedDefaults(project: Project): Project {
@@ -140,17 +164,37 @@ export class AnalyticsService {
         .prepare('SELECT id, data FROM analytics_posts WHERE project_id = ? AND preset = ?')
         .get(project.id, log.preset) as Row | undefined;
       const previous = existing ? analyticsPostSchema.parse(JSON.parse(existing.data)) : undefined;
-      const post = this.postFromProject(project, log, previous?.id ?? randomUUID(), previous?.createdAt ?? now, now);
+      const videoId = log.platform === 'youtube' ? youtubeVideoIdFromUrl(log.url) : undefined;
+      const imported = videoId ? this.importedPostFor(videoId) : undefined;
+      const id = previous?.id ?? imported?.id ?? randomUUID();
+      const base = this.postFromProject(project, log, id, previous?.createdAt ?? imported?.createdAt ?? now, now);
+      const claimedElsewhere = videoId ? this.videoClaimedBy(videoId, [id, imported?.id]) : undefined;
+      const post: AnalyticsPost = analyticsPostSchema.parse({
+        ...base,
+        youtubeVideoId: videoId,
+        ...(videoId ? apiFieldsOf(this.ledgerVideo(videoId)) : {}),
+        experimentId: base.experimentId ?? imported?.experimentId,
+        experimentArm: base.experimentId ? base.experimentArm : imported?.experimentArm,
+      });
+      if (imported) this.absorbImported(imported.id, id);
       this.database
         .prepare(
-          `INSERT INTO analytics_posts (id, project_id, preset, posted_at, data)
-           VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO analytics_posts (id, project_id, preset, posted_at, youtube_video_id, data)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(project_id, preset) DO UPDATE SET
              id = excluded.id,
              posted_at = excluded.posted_at,
+             youtube_video_id = excluded.youtube_video_id,
              data = excluded.data`,
         )
-        .run(post.id, post.projectId, post.preset, post.postedAt, JSON.stringify(post));
+        .run(
+          post.id,
+          post.projectId ?? null,
+          post.preset ?? null,
+          post.postedAt,
+          videoId && !claimedElsewhere ? videoId : null,
+          JSON.stringify(post),
+        );
       if (log.url.trim() && log.postedAt) this.ensureReviewTask(post, now);
       if (log.metrics) this.mirrorMetrics(post.id, log.metrics, log.metrics.capturedAt || now);
       if (post.experimentId) this.noteSecondaryChanges(post);
@@ -466,15 +510,152 @@ export class AnalyticsService {
     });
   }
 
+  /**
+   * YouTubeの台帳をPostへ反映する。既存Postの手入力値・投稿日時・タグは書き換えず、API由来の欄だけ更新する。
+   * 取り込みだけでは振り返りタスクを作らない。
+   */
+  upsertImportedVideos(videos: YoutubeVideo[]): { created: number; linked: number } {
+    this.ensure();
+    const now = new Date().toISOString();
+    let created = 0;
+    let linked = 0;
+    const select = this.database!.prepare('SELECT id, data FROM analytics_posts WHERE youtube_video_id = ?');
+    const update = this.database!.prepare(
+      'UPDATE analytics_posts SET youtube_video_id = ?, posted_at = ?, data = ? WHERE id = ?',
+    );
+    for (const video of videos) {
+      const row = select.get(video.videoId) as Row | undefined;
+      const current = row
+        ? analyticsPostSchema.parse(JSON.parse(row.data))
+        : this.posts().find(
+            (post) =>
+              post.platform === 'youtube' &&
+              !post.youtubeVideoId &&
+              youtubeVideoIdFromUrl(post.url) === video.videoId,
+          );
+      if (current) {
+        const isImported = current.importOrigin === 'youtube-import';
+        const next = analyticsPostSchema.parse({
+          ...current,
+          ...apiFieldsOf(video),
+          youtubeVideoId: video.videoId,
+          ...(isImported
+            ? {
+                url: importedUrl(video),
+                postedAt: video.publishedAt,
+                durationSec: video.durationSec,
+                content: { ...current.content, title: video.title, durationSec: video.durationSec },
+              }
+            : {}),
+          updatedAt: now,
+        });
+        update.run(video.videoId, next.postedAt, JSON.stringify(next), current.id);
+        if (!isImported) linked += 1;
+        continue;
+      }
+      const post = analyticsPostSchema.parse({
+        id: randomUUID(),
+        platform: 'youtube',
+        url: importedUrl(video),
+        postedAt: video.publishedAt,
+        importOrigin: 'youtube-import',
+        youtubeVideoId: video.videoId,
+        ...apiFieldsOf(video),
+        templateId: 'unknown',
+        hookPattern: 'custom',
+        durationSec: video.durationSec,
+        content: {
+          title: video.title,
+          series: '',
+          templateId: 'unknown',
+          hookPattern: 'custom',
+          durationSec: video.durationSec,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      this.database!.prepare(
+        `INSERT INTO analytics_posts (id, project_id, preset, posted_at, youtube_video_id, data)
+         VALUES (?, NULL, NULL, ?, ?, ?)`,
+      ).run(post.id, post.postedAt, video.videoId, JSON.stringify(post));
+      created += 1;
+    }
+    return { created, linked };
+  }
+
+  youtubePostCounts(): { linked: number; unlinked: number } {
+    if (!this.database) return { linked: 0, unlinked: 0 };
+    const row = this.database
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN project_id IS NOT NULL THEN 1 ELSE 0 END) AS linked,
+           SUM(CASE WHEN project_id IS NULL THEN 1 ELSE 0 END) AS unlinked
+         FROM analytics_posts WHERE youtube_video_id IS NOT NULL`,
+      )
+      .get() as { linked: number | null; unlinked: number | null };
+    return { linked: row.linked ?? 0, unlinked: row.unlinked ?? 0 };
+  }
+
+  private importedPostFor(videoId: string): AnalyticsPost | undefined {
+    const row = this.database!.prepare(
+      'SELECT id, data FROM analytics_posts WHERE youtube_video_id = ? AND project_id IS NULL',
+    ).get(videoId) as Row | undefined;
+    if (!row) return undefined;
+    const post = analyticsPostSchema.parse(JSON.parse(row.data));
+    return post.importOrigin === 'youtube-import' ? post : undefined;
+  }
+
+  private videoClaimedBy(videoId: string, exclude: Array<string | undefined>): string | undefined {
+    const rows = this.database!.prepare('SELECT id FROM analytics_posts WHERE youtube_video_id = ?').all(
+      videoId,
+    ) as Array<{ id: string }>;
+    return rows.find((row) => !exclude.includes(row.id))?.id;
+  }
+
+  /** 取り込み済みの未紐付けPostを、制作側のPostへまとめる。参照は付け替えてから消す。 */
+  private absorbImported(fromId: string, toId: string): void {
+    const database = this.database!;
+    database.prepare('DELETE FROM analytics_posts WHERE id = ?').run(fromId);
+    if (fromId === toId) return;
+    for (const table of ['analytics_snapshots', 'analytics_tasks', 'analytics_decisions'] as const) {
+      const rows = database.prepare(`SELECT id, data FROM ${table} WHERE post_id = ?`).all(fromId) as Row[];
+      for (const row of rows) {
+        const data = { ...(JSON.parse(row.data) as Record<string, unknown>), postId: toId };
+        database.prepare(`UPDATE ${table} SET post_id = ?, data = ? WHERE id = ?`).run(toId, JSON.stringify(data), row.id);
+      }
+    }
+    for (const experiment of this.experiments()) {
+      if (!experiment.linkedPostIds.includes(fromId)) continue;
+      this.writeExperiment({
+        ...experiment,
+        linkedPostIds: [...new Set(experiment.linkedPostIds.map((id) => (id === fromId ? toId : id)))],
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  private ledgerVideo(videoId: string): YoutubeVideo | undefined {
+    const row = this.database!.prepare('SELECT data FROM youtube_videos WHERE video_id = ?').get(videoId) as
+      | { data: string }
+      | undefined;
+    if (!row) return undefined;
+    const parsed = youtubeVideoSchema.safeParse(JSON.parse(row.data));
+    return parsed.success ? parsed.data : undefined;
+  }
+
   urlRows(): Array<{ url: string; projectId: string; preset: string; projectTitle: string }> {
-    return this.posts()
-      .filter((post) => post.url.trim())
-      .map((post) => ({
-        url: post.url,
-        projectId: post.projectId,
-        preset: post.preset,
-        projectTitle: post.content.title || post.projectId,
-      }));
+    return this.posts().flatMap((post) =>
+      post.url.trim() && post.projectId && post.preset
+        ? [
+            {
+              url: post.url,
+              projectId: post.projectId,
+              preset: post.preset,
+              projectTitle: post.content.title || post.projectId,
+            },
+          ]
+        : [],
+    );
   }
 
   has7d(projectId: string, preset: string): boolean {
@@ -487,7 +668,7 @@ export class AnalyticsService {
     if (!this.database) return;
     const nowIso = new Date().toISOString();
     for (const post of this.posts()) {
-      if (!post.url.trim() || !post.postedAt) continue;
+      if (!post.url.trim() || !post.postedAt || !post.projectId) continue;
       const id = `24h:${post.id}`;
       if (this.tasks().some((task) => task.id === id)) continue;
       const posted = new Date(post.postedAt);

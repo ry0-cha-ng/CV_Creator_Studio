@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { aiProviderChoiceSchema, type AiProviderChoice } from '../../../shared/ai';
+import { youtubeSyncSettingsSchema, type YoutubeSyncSettings } from '../../../shared/schema/youtube';
 
 /** このPC専用の初期保存先。設定が無いとき、起動時にここを開く。 */
 export const DEFAULT_WORKSPACE = 'C:\\Users\\ry0ch\\デスクトップ\\VCV\\VCV\\CVCS';
@@ -9,6 +10,7 @@ export const DEFAULT_WORKSPACE = 'C:\\Users\\ry0ch\\デスクトップ\\VCV\\VCV
 export type StudioSettings = {
   workspace?: string;
   aiProvider?: AiProviderChoice;
+  youtubeSync?: YoutubeSyncSettings;
 };
 
 const settingsPath = (): string => path.join(app.getPath('userData'), 'studio-settings.json');
@@ -20,6 +22,8 @@ export const readStudioSettings = async (): Promise<StudioSettings> => {
     if (typeof raw.workspace === 'string') settings.workspace = raw.workspace;
     const provider = aiProviderChoiceSchema.safeParse(raw.aiProvider);
     if (provider.success) settings.aiProvider = provider.data;
+    const youtubeSync = youtubeSyncSettingsSchema.safeParse(raw.youtubeSync ?? {});
+    if (youtubeSync.success) settings.youtubeSync = youtubeSync.data;
     return settings;
   } catch {
     return {};

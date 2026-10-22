@@ -299,3 +299,9 @@ export const checkPostUrl = (
   input: string,
   context?: PostUrlContext,
 ): PostUrlVerdict => applyContext(platform, judge(platform, input), context);
+
+/** Shorts・watch・youtu.be・Studio のどの表記でも同じ動画IDを返す。横動画の照合にも使う。 */
+export const youtubeVideoIdFromUrl = (input: string): string | undefined => {
+  const verdict = judge('youtube', input);
+  return verdict.status === 'error' || verdict.status === 'empty' ? undefined : verdict.videoId;
+};

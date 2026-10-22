@@ -90,6 +90,20 @@ const api: StudioApi = {
     ipcRenderer.on('export:progress', listener);
     return () => ipcRenderer.removeListener('export:progress', listener);
   },
+  getYoutubeStatus: () => ipcRenderer.invoke('youtube:status'),
+  setYoutubeClient: (clientId, clientSecret) => ipcRenderer.invoke('youtube:set-client', clientId, clientSecret),
+  connectYoutube: () => ipcRenderer.invoke('youtube:connect'),
+  cancelYoutubeLogin: () => ipcRenderer.invoke('youtube:cancel-login'),
+  disconnectYoutube: () => ipcRenderer.invoke('youtube:disconnect'),
+  setYoutubeSettings: (patch) => ipcRenderer.invoke('youtube:set-settings', patch),
+  syncYoutube: () => ipcRenderer.invoke('youtube:sync'),
+  cancelYoutubeSync: () => ipcRenderer.invoke('youtube:cancel-sync'),
+  onYoutubeProgress: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof callback>[0]): void =>
+      callback(progress);
+    ipcRenderer.on('youtube:progress', listener);
+    return () => ipcRenderer.removeListener('youtube:progress', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('studio', api);

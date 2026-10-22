@@ -650,7 +650,11 @@ export const PostPanel = ({
           <div className="an-muted">{platformLabel(post.platform)} · {langLabel(post.lang)}</div>
           <div className="an-muted">{stamp(post.postedAt)} 投稿 · {elapsed(post.postedAt)}</div>
           <button type="button" className="an-text-btn" disabled={!post.url} onClick={() => post.url && window.open(post.url, '_blank', 'noopener')}>動画を開く</button>
-          <button type="button" className="an-text-btn" onClick={() => openProject(post.projectId)}>プロジェクトを開く</button>
+          {post.projectId ? (
+            <button type="button" className="an-text-btn" onClick={() => post.projectId && openProject(post.projectId)}>プロジェクトを開く</button>
+          ) : (
+            <span className="an-muted">制作プロジェクト未紐付け</span>
+          )}
         </div>
       </div>
       <section>

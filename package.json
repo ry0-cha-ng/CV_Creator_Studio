@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check:schema": "npx --yes tsx scripts/check-schema-migration.ts",
     "check:analytics": "npx --yes tsx scripts/check-analytics.ts",
+    "check:youtube": "npx --yes tsx scripts/check-youtube.ts",
     "check:post-url": "npx --yes tsx scripts/check-post-url.ts",
     "check:x-post": "npx --yes tsx scripts/check-x-post.ts",
     "check:publishing": "npx --yes tsx scripts/check-publishing.ts",
