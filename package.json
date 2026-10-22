@@ -1,0 +1,128 @@
+{
+  "name": "cv-creator-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ClutchVault向け定点ショート動画制作デスクトップアプリ",
+  "main": "./out/main/index.js",
+  "author": "Ryo",
+  "license": "UNLICENSED",
+  "scripts": {
+    "sync:valorant-master": "node scripts/sync-valorant-master.mjs",
+    "sync:valorant-catalog": "node scripts/build-valorant-catalog-index.mjs",
+    "generate:test-audio": "node scripts/generate-test-audio.mjs",
+    "dev": "npm run sync:valorant-master && npm run sync:valorant-catalog && electron-vite dev",
+    "build": "npm run sync:valorant-master && npm run sync:valorant-catalog && npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "check:schema": "npx --yes tsx scripts/check-schema-migration.ts",
+    "check:analytics": "npx --yes tsx scripts/check-analytics.ts",
+    "check:post-url": "npx --yes tsx scripts/check-post-url.ts",
+    "check:x-post": "npx --yes tsx scripts/check-x-post.ts",
+    "check:publishing": "npx --yes tsx scripts/check-publishing.ts",
+    "check:ai": "npx --yes tsx scripts/check-ai.ts",
+    "check:save": "npx --yes tsx scripts/check-save-roundtrip.ts",
+    "check:aim-zoom": "npx --yes tsx scripts/check-aim-zoom.ts",
+    "check:annotation-style": "npx --yes tsx scripts/check-annotation-style.ts",
+    "check:video-structure": "npx --yes tsx scripts/check-video-structure.ts",
+    "package:win": "npm run build && electron-builder --win nsis",
+    "package:mac": "npm run build && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.307",
+    "@fontsource/chakra-petch": "^5.3.0",
+    "@fontsource/montserrat": "^5.3.0",
+    "@fontsource/zen-kaku-gothic-new": "^5.3.0",
+    "@remotion/bundler": "4.0.527",
+    "@remotion/player": "4.0.527",
+    "@remotion/renderer": "4.0.527",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "4.0.527",
+    "twitter-text": "^3.1.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^44.9.3",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "5.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  },
+  "build": {
+    "appId": "app.clutchvault.cvcreatorstudio",
+    "productName": "CV Creator Studio",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "remotion",
+        "to": "remotion"
+      },
+      {
+        "from": "shared",
+        "to": "shared"
+      },
+      {
+        "from": "node_modules/@fontsource",
+        "to": "node_modules/@fontsource"
+      },
+      {
+        "from": "node_modules/zod",
+        "to": "node_modules/zod"
+      },
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "resources/icon.png",
+      "target": "nsis",
+      "extraResources": [
+        {
+          "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+          "to": "bin/ffmpeg.exe"
+        },
+        {
+          "from": "node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe",
+          "to": "bin/ffprobe.exe"
+        }
+      ]
+    },
+    "mac": {
+      "icon": "resources/icon.png",
+      "target": "dmg",
+      "category": "public.app-category.video",
+      "extraResources": [
+        {
+          "from": "node_modules/ffmpeg-static/ffmpeg",
+          "to": "bin/ffmpeg"
+        },
+        {
+          "from": "node_modules/ffprobe-static/bin/darwin/arm64/ffprobe",
+          "to": "bin/ffprobe"
+        }
+      ]
+    }
+  }
+}

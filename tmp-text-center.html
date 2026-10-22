@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: 'Chakra Petch';
+        font-weight: 700;
+        src: url('./node_modules/@fontsource/chakra-petch/files/chakra-petch-latin-700-normal.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Zen Kaku Gothic New';
+        font-weight: 700;
+        src: url('./node_modules/@fontsource/zen-kaku-gothic-new/files/zen-kaku-gothic-new-japanese-700-normal.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Zen Kaku Gothic New';
+        font-weight: 700;
+        src: url('./node_modules/@fontsource/zen-kaku-gothic-new/files/zen-kaku-gothic-new-latin-700-normal.woff') format('woff');
+        unicode-range: U+0000-00FF;
+      }
+      @font-face {
+        font-family: 'Zen Kaku Gothic New';
+        font-weight: 900;
+        src: url('./node_modules/@fontsource/zen-kaku-gothic-new/files/zen-kaku-gothic-new-japanese-900-normal.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Zen Kaku Gothic New';
+        font-weight: 900;
+        src: url('./node_modules/@fontsource/zen-kaku-gothic-new/files/zen-kaku-gothic-new-latin-900-normal.woff') format('woff');
+        unicode-range: U+0000-00FF;
+      }
+      @font-face {
+        font-family: 'Montserrat';
+        font-weight: 800;
+        src: url('./node_modules/@fontsource/montserrat/files/montserrat-latin-800-normal.woff') format('woff');
+      }
+      @font-face {
+        font-family: 'Montserrat';
+        font-weight: 900;
+        src: url('./node_modules/@fontsource/montserrat/files/montserrat-latin-900-normal.woff') format('woff');
+      }
+      body { background: #111; color: #fff; margin: 24px; }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 20px;
+        background: #0f1923;
+        border: 1px solid #3a4a57;
+        margin: 8px 0;
+      }
+      .opt {
+        line-height: 1;
+        text-box-trim: trim-both;
+        text-box-edge: cap alphabetic;
+      }
+      .opt-text {
+        line-height: 1;
+        text-box-trim: trim-both;
+        text-box-edge: text;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="samples"></div>
+    <pre id="out"></pre>
+    <script>
+      const samples = [
+        ['chakra-28', '700 28px "Chakra Petch"', 'STAND'],
+        ['chakra-29', '700 29px "Chakra Petch"', '01 STAND'],
+        ['zen-24', '700 24px "Zen Kaku Gothic New"', 'Position'],
+        ['zen-24-ja', '700 24px "Zen Kaku Gothic New"', '立ち位置'],
+        ['zen-22', '700 22px "Zen Kaku Gothic New"', '合わせ位置'],
+        ['mont-23', '800 23px Montserrat', 'SAVE THIS LINEUP'],
+        ['mont-30', '900 30px Montserrat', 'Left Click'],
+        ['zen-26', '900 26px "Zen Kaku Gothic New"', '定点を保存'],
+      ];
+      document.fonts.ready.then(() => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const lines = [];
+        for (const [name, font, text] of samples) {
+          ctx.font = font;
+          const m = ctx.measureText(text);
+          const fontBox = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+          const inkTop = m.fontBoundingBoxAscent - m.actualBoundingBoxAscent;
+          const inkBottom = m.fontBoundingBoxAscent + m.actualBoundingBoxDescent;
+          const inkCenter = (inkTop + inkBottom) / 2;
+          const boxCenter = fontBox / 2;
+          lines.push(
+            name +
+              ' fontBox=' + fontBox.toFixed(2) +
+              ' ink=' + m.actualBoundingBoxAscent.toFixed(2) + '/' + m.actualBoundingBoxDescent.toFixed(2) +
+              ' font=' + m.fontBoundingBoxAscent.toFixed(2) + '/' + m.fontBoundingBoxDescent.toFixed(2) +
+              ' inkShift=' + (inkCenter - boxCenter).toFixed(2)
+          );
+        }
+
+        const host = document.getElementById('samples');
+        const specs = [
+          { id: 'badge', cls: '', html: '<span style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">01</span><span style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">Position</span>' },
+          { id: 'badge-opt', cls: 'opt', html: '<span class="opt" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">01</span><span class="opt" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span class="opt" style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">Position</span>' },
+          { id: 'badge-text', cls: 'opt-text', html: '<span class="opt-text" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">01</span><span class="opt-text" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span class="opt-text" style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">Position</span>' },
+          { id: 'ja', cls: '', html: '<span style="font:700 28px \'Chakra Petch\',sans-serif">01</span><span style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">立ち位置</span>' },
+          { id: 'ja-opt', cls: 'opt', html: '<span class="opt" style="font:700 28px \'Chakra Petch\',sans-serif">01</span><span class="opt" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span class="opt" style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">立ち位置</span>' },
+          { id: 'ja-text', cls: 'opt-text', html: '<span class="opt-text" style="font:700 28px \'Chakra Petch\',sans-serif">01</span><span class="opt-text" style="font:700 28px \'Chakra Petch\',sans-serif;letter-spacing:3px">STAND</span><span class="opt-text" style="font:700 24px \'Zen Kaku Gothic New\',sans-serif">立ち位置</span>' },
+          { id: 'pill', cls: '', html: '<span style="font:800 23px Montserrat,sans-serif">SAVE THIS LINEUP</span>' },
+          { id: 'pill-opt', cls: 'opt', html: '<span class="opt" style="font:800 23px Montserrat,sans-serif">SAVE THIS LINEUP</span>' },
+        ];
+        for (const spec of specs) {
+          const chip = document.createElement('div');
+          chip.className = 'chip';
+          chip.id = spec.id;
+          chip.innerHTML = spec.html;
+          host.appendChild(chip);
+          host.appendChild(document.createElement('br'));
+        }
+
+          for (const spec of specs) {
+            const chip = document.getElementById(spec.id);
+            const chipRect = chip.getBoundingClientRect();
+            lines.push('## ' + spec.id + ' h=' + chipRect.height.toFixed(1));
+            for (const span of chip.querySelectorAll('span')) {
+              const r = span.getBoundingClientRect();
+              lines.push(
+                span.textContent +
+                  ' spanTop=' + (r.top - chipRect.top).toFixed(2) +
+                  ' spanBot=' + (chipRect.bottom - r.bottom).toFixed(2) +
+                  ' spanH=' + r.height.toFixed(2)
+              );
+            }
+          }
+          document.getElementById('out').textContent = lines.join('\n');
+      });
+    </script>
+  </body>
+</html>

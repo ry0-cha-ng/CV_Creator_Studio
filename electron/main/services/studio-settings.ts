@@ -1,0 +1,36 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { app } from 'electron';
+import { aiProviderChoiceSchema, type AiProviderChoice } from '../../../shared/ai';
+
+/** このPC専用の初期保存先。設定が無いとき、起動時にここを開く。 */
+export const DEFAULT_WORKSPACE = 'C:\\Users\\ry0ch\\デスクトップ\\VCV\\VCV\\CVCS';
+
+export type StudioSettings = {
+  workspace?: string;
+  aiProvider?: AiProviderChoice;
+};
+
+const settingsPath = (): string => path.join(app.getPath('userData'), 'studio-settings.json');
+
+export const readStudioSettings = async (): Promise<StudioSettings> => {
+  try {
+    const raw = JSON.parse(await fs.readFile(settingsPath(), 'utf8')) as Record<string, unknown>;
+    const settings: StudioSettings = {};
+    if (typeof raw.workspace === 'string') settings.workspace = raw.workspace;
+    const provider = aiProviderChoiceSchema.safeParse(raw.aiProvider);
+    if (provider.success) settings.aiProvider = provider.data;
+    return settings;
+  } catch {
+    return {};
+  }
+};
+
+export const patchStudioSettings = async (patch: Partial<StudioSettings>): Promise<StudioSettings> => {
+  const next = { ...(await readStudioSettings()), ...patch };
+  await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
+  const temporary = `${settingsPath()}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(next, null, 2), 'utf8');
+  await fs.rename(temporary, settingsPath());
+  return next;
+};

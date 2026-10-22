@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClutchVault サムネイル A案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ===== ブランドトークン ===== */
+  :root {
+    --bg: #2B2522;            /* 背景（実制作ではプレイ画面のぼかし） */
+    --band: #0D0E11;          /* 下部帯 */
+    --text: #FFFFFF;
+    --accent: #F0474E;        /* 見出しアクセント／ATK */
+    --atk-bg: #F0474E;
+    --atk-fg: #FFFFFF;
+    --def-bg: #22C55E;        /* CVアプリのDEF色 */
+    --def-fg: #052E16;
+    --placeholder: #3A3F47;
+    --placeholder-2: #23262C;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0F0F0F;
+    color: #F1F1F1;
+    font-family: 'Noto Sans JP', sans-serif;
+  }
+
+  /* ===== 操作パネル ===== */
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: end;
+    padding: 16px 24px; border-bottom: 1px solid #272727;
+  }
+  .controls label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #AAAAAA; }
+  .controls input, .controls select {
+    height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid #3A3A3A;
+    background: #1A1A1A; color: #F1F1F1; font-size: 15px; min-width: 120px;
+  }
+  .stage {
+    display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start;
+    padding: 24px;
+  }
+  .stage h2 { margin: 0 0 10px; font-size: 13px; font-weight: 700; color: #AAAAAA; }
+
+  /* ===== サムネイル本体（1080×1920 実寸） ===== */
+  .thumb {
+    position: relative; width: 1080px; height: 1920px; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: 'Montserrat', sans-serif;
+  }
+  .thumb .headline {
+    position: absolute; top: 300px; left: 0; right: 0;
+    text-align: center; font-weight: 900; font-size: 80px; line-height: 1.2;
+    text-transform: uppercase;
+  }
+  .thumb .headline .accent { color: var(--accent); }
+  .thumb .shot {
+    position: absolute; top: 668px; left: 0; width: 1080px; height: 608px;
+    background-color: var(--placeholder);
+    background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0 24px, transparent 24px 48px);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Noto Sans JP', sans-serif; font-size: 32px; color: #C9CED6;
+  }
+  .thumb .band {
+    position: absolute; top: 1276px; left: 0; width: 1080px; height: 240px;
+    background: var(--band); display: flex; align-items: center;
+  }
+  .thumb .agent {
+    width: 224px; height: 240px; flex-shrink: 0; background: var(--placeholder-2);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .thumb .info {
+    flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 24px;
+  }
+  .thumb .side {
+    padding: 12px 24px 10px; border-radius: 12px; font-weight: 900; font-size: 48px;
+    letter-spacing: .04em; line-height: 1;
+    background: var(--atk-bg); color: var(--atk-fg);
+  }
+  .thumb[data-side="DEF"] .side { background: var(--def-bg); color: var(--def-fg); }
+  .thumb .map {
+    font-weight: 900; font-size: 64px; letter-spacing: .02em; line-height: 1; white-space: nowrap;
+  }
+  .thumb .logo {
+    width: 160px; height: 240px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* ===== 表示用の縮小枠 ===== */
+  .frame { position: relative; overflow: hidden; }
+  .frame .thumb { position: absolute; left: 0; transform-origin: 0 0; }
+  .frame.full  { width: 405px; height: 720px; border: 1px solid #272727; }
+  .frame.full .thumb { top: 0; transform: scale(.375); }
+  /* ショート棚：上下を約8%トリミング */
+  .frame.shelf-pc { width: 210px; height: 315px; border-radius: 12px; }
+  .frame.shelf-pc .thumb { top: -29px; transform: scale(.19444); }
+  .frame.shelf-sp { width: 150px; height: 225px; border-radius: 10px; }
+  .frame.shelf-sp .thumb { top: -21px; transform: scale(.13889); }
+</style>
+</head>
+<body>
+
+<form class="controls" onsubmit="return false">
+  <label>マップ<input id="map" value="CORRODE" autocomplete="off"></label>
+  <label>エリア<input id="area" value="B" autocomplete="off"></label>
+  <label>サイド
+    <select id="side">
+      <option value="ATK">ATK</option>
+      <option value="DEF">DEF</option>
+    </select>
+  </label>
+</form>
+
+<div class="stage">
+  <section>
+    <h2>全体（1080×1920 を 37.5% 表示）</h2>
+    <div class="frame full" data-slot></div>
+  </section>
+  <section>
+    <h2>ショート棚 PC（幅 約210px）</h2>
+    <div class="frame shelf-pc" data-slot></div>
+  </section>
+  <section>
+    <h2>ショート棚 スマホ（幅 約150px）</h2>
+    <div class="frame shelf-sp" data-slot></div>
+  </section>
+</div>
+
+<template id="thumb-tpl">
+  <div class="thumb" data-side="ATK">
+    <div class="headline">
+      <div class="accent">FLUSH THEM OUT</div>
+      <div>FROM BEHIND</div>
+      <div>THIS BOX.</div>
+    </div>
+    <div class="shot">ゲームプレイ画面（16:9）</div>
+    <div class="band">
+      <div class="agent">
+        <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="#7D848F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+      </div>
+      <div class="info">
+        <div class="side">ATK</div>
+        <div class="map">CORRODE B</div>
+      </div>
+      <div class="logo">
+        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5c.8 3-1.6 4.8-2.8 7-1 1.9-.2 4 1.8 4.2 1.8.2 2.8-1.6 2-3.6 2.3 1.2 4.5 3.9 4.5 7a5.5 5.5 0 0 1-11 0c0-3.9 2.6-6 3.8-8.6.7-1.6 1.6-3.4 1.7-6z"/></svg>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+  const tpl = document.getElementById('thumb-tpl');
+  document.querySelectorAll('[data-slot]').forEach(slot => slot.appendChild(tpl.content.cloneNode(true)));
+
+  const $map = document.getElementById('map');
+  const $area = document.getElementById('area');
+  const $side = document.getElementById('side');
+
+  function render() {
+    const label = ($map.value.trim() + ' ' + $area.value.trim()).toUpperCase();
+    document.querySelectorAll('.thumb').forEach(t => {
+      t.dataset.side = $side.value;
+      t.querySelector('.side').textContent = $side.value;
+      t.querySelector('.map').textContent = label;
+    });
+  }
+  [$map, $area, $side].forEach(el => el.addEventListener('input', render));
+  render();
+</script>
+</body>
+</html>

@@ -1,0 +1,1048 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "application": "ValorantClutchVault",
+    "apiVersion": "v1",
+    "lastUpdated": "2026-09-05T08:52:56.799Z"
+  },
+  "maps": [
+    {
+      "id": "Bind",
+      "displayName": "Bind",
+      "uuid": "2c9d57ec-4431-9c5e-2939-8f9ef6dd5cba",
+      "iconUrl": "https://media.valorant-api.com/maps/2c9d57ec-4431-9c5e-2939-8f9ef6dd5cba/listviewicon.png"
+    },
+    {
+      "id": "Haven",
+      "displayName": "Haven",
+      "uuid": "2bee0dc9-4ffe-519b-1cbd-7fbe763a6047",
+      "iconUrl": "https://media.valorant-api.com/maps/2bee0dc9-4ffe-519b-1cbd-7fbe763a6047/listviewicon.png"
+    },
+    {
+      "id": "Split",
+      "displayName": "Split",
+      "uuid": "d960549e-485c-e861-8d71-aa9d1aed12a2",
+      "iconUrl": "https://media.valorant-api.com/maps/d960549e-485c-e861-8d71-aa9d1aed12a2/listviewicon.png"
+    },
+    {
+      "id": "Ascent",
+      "displayName": "Ascent",
+      "uuid": "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319",
+      "iconUrl": "https://media.valorant-api.com/maps/7eaecc1b-4337-bbf6-6ab9-04b8f06b3319/listviewicon.png"
+    },
+    {
+      "id": "Icebox",
+      "displayName": "Icebox",
+      "uuid": "e2ad5c54-4114-a870-9641-8ea21279579a",
+      "iconUrl": "https://media.valorant-api.com/maps/e2ad5c54-4114-a870-9641-8ea21279579a/listviewicon.png"
+    },
+    {
+      "id": "Breeze",
+      "displayName": "Breeze",
+      "uuid": "2fb9a4fd-47b8-4e7d-a969-74b4046ebd53",
+      "iconUrl": "https://media.valorant-api.com/maps/2fb9a4fd-47b8-4e7d-a969-74b4046ebd53/listviewicon.png"
+    },
+    {
+      "id": "Fracture",
+      "displayName": "Fracture",
+      "uuid": "b529448b-4d60-346e-e89e-00a4c527a405",
+      "iconUrl": "https://media.valorant-api.com/maps/b529448b-4d60-346e-e89e-00a4c527a405/listviewicon.png"
+    },
+    {
+      "id": "Pearl",
+      "displayName": "Pearl",
+      "uuid": "fd267378-4d1d-484f-ff52-77821ed10dc2",
+      "iconUrl": "https://media.valorant-api.com/maps/fd267378-4d1d-484f-ff52-77821ed10dc2/listviewicon.png"
+    },
+    {
+      "id": "Lotus",
+      "displayName": "Lotus",
+      "uuid": "2fe4ed3a-450a-948b-6d6b-e89a78e680a9",
+      "iconUrl": "https://media.valorant-api.com/maps/2fe4ed3a-450a-948b-6d6b-e89a78e680a9/listviewicon.png"
+    },
+    {
+      "id": "Sunset",
+      "displayName": "Sunset",
+      "uuid": "92584fbe-486a-b1b2-9faa-39b0f486b498",
+      "iconUrl": "https://media.valorant-api.com/maps/92584fbe-486a-b1b2-9faa-39b0f486b498/listviewicon.png"
+    },
+    {
+      "id": "Abyss",
+      "displayName": "Abyss",
+      "uuid": "224b0a95-48b9-f703-1bd8-67aca101a61f",
+      "iconUrl": "https://media.valorant-api.com/maps/224b0a95-48b9-f703-1bd8-67aca101a61f/listviewicon.png"
+    },
+    {
+      "id": "Corrode",
+      "displayName": "Corrode",
+      "uuid": "1c18ab1f-420d-0d8b-71d0-77ad3c439115",
+      "iconUrl": "https://media.valorant-api.com/maps/1c18ab1f-420d-0d8b-71d0-77ad3c439115/listviewicon.png"
+    },
+    {
+      "id": "Summit",
+      "displayName": "Summit",
+      "uuid": "756da597-416b-c0f2-f47b-afbdf28670bc",
+      "iconUrl": "https://media.valorant-api.com/maps/756da597-416b-c0f2-f47b-afbdf28670bc/listviewicon.png"
+    }
+  ],
+  "agents": [
+    {
+      "id": "Brimstone",
+      "displayName": "Brimstone",
+      "uuid": "9f0d8ba9-4140-b941-57d3-a7ad57c6b417",
+      "iconUrl": "https://media.valorant-api.com/agents/9f0d8ba9-4140-b941-57d3-a7ad57c6b417/displayicon.png",
+      "abilities": [
+        {
+          "id": "Stim Beacon",
+          "displayName": "Stim Beacon",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/9f0d8ba9-4140-b941-57d3-a7ad57c6b417/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Incendiary",
+          "displayName": "Incendiary",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/9f0d8ba9-4140-b941-57d3-a7ad57c6b417/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Sky Smoke",
+          "displayName": "Sky Smoke",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/9f0d8ba9-4140-b941-57d3-a7ad57c6b417/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Orbital Strike",
+          "displayName": "Orbital Strike",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/9f0d8ba9-4140-b941-57d3-a7ad57c6b417/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Viper",
+      "displayName": "Viper",
+      "uuid": "707eab51-4836-f488-046a-cda6bf494859",
+      "iconUrl": "https://media.valorant-api.com/agents/707eab51-4836-f488-046a-cda6bf494859/displayicon.png",
+      "abilities": [
+        {
+          "id": "Poison Cloud",
+          "displayName": "Poison Cloud",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/707eab51-4836-f488-046a-cda6bf494859/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Toxic Screen",
+          "displayName": "Toxic Screen",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/707eab51-4836-f488-046a-cda6bf494859/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Snake Bite",
+          "displayName": "Snake Bite",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/707eab51-4836-f488-046a-cda6bf494859/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Viper's Pit",
+          "displayName": "Viper's Pit",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/707eab51-4836-f488-046a-cda6bf494859/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Toxic",
+          "displayName": "Toxic",
+          "slot": "Passive",
+          "iconUrl": null
+        }
+      ]
+    },
+    {
+      "id": "Killjoy",
+      "displayName": "Killjoy",
+      "uuid": "1e58de9c-4950-5125-93e9-a0aee9f98746",
+      "iconUrl": "https://media.valorant-api.com/agents/1e58de9c-4950-5125-93e9-a0aee9f98746/displayicon.png",
+      "abilities": [
+        {
+          "id": "Nanoswarm",
+          "displayName": "Nanoswarm",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/1e58de9c-4950-5125-93e9-a0aee9f98746/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "ALARMBOT",
+          "displayName": "ALARMBOT",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/1e58de9c-4950-5125-93e9-a0aee9f98746/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "TURRET",
+          "displayName": "TURRET",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/1e58de9c-4950-5125-93e9-a0aee9f98746/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Lockdown",
+          "displayName": "Lockdown",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/1e58de9c-4950-5125-93e9-a0aee9f98746/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Cypher",
+      "displayName": "Cypher",
+      "uuid": "117ed9e3-49f3-6512-3ccf-0cada7e3823b",
+      "iconUrl": "https://media.valorant-api.com/agents/117ed9e3-49f3-6512-3ccf-0cada7e3823b/displayicon.png",
+      "abilities": [
+        {
+          "id": "Cyber Cage",
+          "displayName": "Cyber Cage",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/117ed9e3-49f3-6512-3ccf-0cada7e3823b/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Spycam",
+          "displayName": "Spycam",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/117ed9e3-49f3-6512-3ccf-0cada7e3823b/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Trapwire",
+          "displayName": "Trapwire",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/117ed9e3-49f3-6512-3ccf-0cada7e3823b/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Neural Theft",
+          "displayName": "Neural Theft",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/117ed9e3-49f3-6512-3ccf-0cada7e3823b/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Sova",
+      "displayName": "Sova",
+      "uuid": "320b2a48-4d9b-a075-30f1-1f93a9b638fa",
+      "iconUrl": "https://media.valorant-api.com/agents/320b2a48-4d9b-a075-30f1-1f93a9b638fa/displayicon.png",
+      "abilities": [
+        {
+          "id": "Shock Bolt",
+          "displayName": "Shock Bolt",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/320b2a48-4d9b-a075-30f1-1f93a9b638fa/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Recon Bolt",
+          "displayName": "Recon Bolt",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/320b2a48-4d9b-a075-30f1-1f93a9b638fa/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Owl Drone",
+          "displayName": "Owl Drone",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/320b2a48-4d9b-a075-30f1-1f93a9b638fa/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Hunter's Fury",
+          "displayName": "Hunter's Fury",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/320b2a48-4d9b-a075-30f1-1f93a9b638fa/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Uncanny Marksman",
+          "displayName": "Uncanny Marksman",
+          "slot": "Passive",
+          "iconUrl": null
+        }
+      ]
+    },
+    {
+      "id": "Sage",
+      "displayName": "Sage",
+      "uuid": "569fdd95-4d10-43ab-ca70-79becc718b46",
+      "iconUrl": "https://media.valorant-api.com/agents/569fdd95-4d10-43ab-ca70-79becc718b46/displayicon.png",
+      "abilities": [
+        {
+          "id": "Slow Orb",
+          "displayName": "Slow Orb",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/569fdd95-4d10-43ab-ca70-79becc718b46/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Healing Orb",
+          "displayName": "Healing Orb",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/569fdd95-4d10-43ab-ca70-79becc718b46/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Barrier Orb",
+          "displayName": "Barrier Orb",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/569fdd95-4d10-43ab-ca70-79becc718b46/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Resurrection",
+          "displayName": "Resurrection",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/569fdd95-4d10-43ab-ca70-79becc718b46/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Phoenix",
+      "displayName": "Phoenix",
+      "uuid": "eb93336a-449b-9c1b-0a54-a891f7921d69",
+      "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/displayicon.png",
+      "abilities": [
+        {
+          "id": "Blaze",
+          "displayName": "Blaze",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Hot Hands",
+          "displayName": "Hot Hands",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Curveball",
+          "displayName": "Curveball",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Run it Back",
+          "displayName": "Run it Back",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/eb93336a-449b-9c1b-0a54-a891f7921d69/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Heating Up",
+          "displayName": "Heating Up",
+          "slot": "Passive",
+          "iconUrl": null
+        }
+      ]
+    },
+    {
+      "id": "Raze",
+      "displayName": "Raze",
+      "uuid": "f94c3b30-42be-e959-889c-5aa313dba261",
+      "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/displayicon.png",
+      "abilities": [
+        {
+          "id": "Blast Pack",
+          "displayName": "Blast Pack",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Paint Shells",
+          "displayName": "Paint Shells",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Boom Bot",
+          "displayName": "Boom Bot",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Showstopper",
+          "displayName": "Showstopper",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/f94c3b30-42be-e959-889c-5aa313dba261/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Breach",
+      "displayName": "Breach",
+      "uuid": "5f8d3a7f-467b-97f3-062c-13acf203c006",
+      "iconUrl": "https://media.valorant-api.com/agents/5f8d3a7f-467b-97f3-062c-13acf203c006/displayicon.png",
+      "abilities": [
+        {
+          "id": "Flashpoint",
+          "displayName": "Flashpoint",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/5f8d3a7f-467b-97f3-062c-13acf203c006/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Fault Line",
+          "displayName": "Fault Line",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/5f8d3a7f-467b-97f3-062c-13acf203c006/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Aftershock",
+          "displayName": "Aftershock",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/5f8d3a7f-467b-97f3-062c-13acf203c006/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Rolling Thunder",
+          "displayName": "Rolling Thunder",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/5f8d3a7f-467b-97f3-062c-13acf203c006/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Skye",
+      "displayName": "Skye",
+      "uuid": "6f2a04ca-43e0-be17-7f36-b3908627744d",
+      "iconUrl": "https://media.valorant-api.com/agents/6f2a04ca-43e0-be17-7f36-b3908627744d/displayicon.png",
+      "abilities": [
+        {
+          "id": "Trailblazer",
+          "displayName": "Trailblazer",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/6f2a04ca-43e0-be17-7f36-b3908627744d/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Guiding Light",
+          "displayName": "Guiding Light",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/6f2a04ca-43e0-be17-7f36-b3908627744d/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Regrowth",
+          "displayName": "Regrowth",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/6f2a04ca-43e0-be17-7f36-b3908627744d/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Seekers",
+          "displayName": "Seekers",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/6f2a04ca-43e0-be17-7f36-b3908627744d/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Yoru",
+      "displayName": "Yoru",
+      "uuid": "7f94d92c-4234-0a36-9646-3a87eb8b5c89",
+      "iconUrl": "https://media.valorant-api.com/agents/7f94d92c-4234-0a36-9646-3a87eb8b5c89/displayicon.png",
+      "abilities": [
+        {
+          "id": "FAKEOUT",
+          "displayName": "FAKEOUT",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/7f94d92c-4234-0a36-9646-3a87eb8b5c89/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "BLINDSIDE",
+          "displayName": "BLINDSIDE",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/7f94d92c-4234-0a36-9646-3a87eb8b5c89/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "GATECRASH",
+          "displayName": "GATECRASH",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/7f94d92c-4234-0a36-9646-3a87eb8b5c89/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "DIMENSIONAL DRIFT",
+          "displayName": "DIMENSIONAL DRIFT",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/7f94d92c-4234-0a36-9646-3a87eb8b5c89/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Astra",
+      "displayName": "Astra",
+      "uuid": "41fb69c1-4189-7b37-f117-bcaf1e96f1bf",
+      "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/displayicon.png",
+      "abilities": [
+        {
+          "id": "Nova Pulse",
+          "displayName": "Nova Pulse",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Nebula  / Dissipate",
+          "displayName": "Nebula  / Dissipate",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Gravity Well",
+          "displayName": "Gravity Well",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Astral Form / Cosmic Divide",
+          "displayName": "Astral Form / Cosmic Divide",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Astral Form",
+          "displayName": "Astral Form",
+          "slot": "Passive",
+          "iconUrl": "https://media.valorant-api.com/agents/41fb69c1-4189-7b37-f117-bcaf1e96f1bf/abilities/passive/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "KAY/O",
+      "displayName": "KAY/O",
+      "uuid": "601dbbe7-43ce-be57-2a40-4abd24953621",
+      "iconUrl": "https://media.valorant-api.com/agents/601dbbe7-43ce-be57-2a40-4abd24953621/displayicon.png",
+      "abilities": [
+        {
+          "id": "FRAG/ment",
+          "displayName": "FRAG/ment",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/601dbbe7-43ce-be57-2a40-4abd24953621/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "FLASH/drive",
+          "displayName": "FLASH/drive",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/601dbbe7-43ce-be57-2a40-4abd24953621/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "ZERO/point",
+          "displayName": "ZERO/point",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/601dbbe7-43ce-be57-2a40-4abd24953621/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "NULL/cmd",
+          "displayName": "NULL/cmd",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/601dbbe7-43ce-be57-2a40-4abd24953621/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Neon",
+      "displayName": "Neon",
+      "uuid": "bb2a4828-46eb-8cd1-e765-15848195d751",
+      "iconUrl": "https://media.valorant-api.com/agents/bb2a4828-46eb-8cd1-e765-15848195d751/displayicon.png",
+      "abilities": [
+        {
+          "id": "High Gear",
+          "displayName": "High Gear",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/bb2a4828-46eb-8cd1-e765-15848195d751/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Relay Bolt",
+          "displayName": "Relay Bolt",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/bb2a4828-46eb-8cd1-e765-15848195d751/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Fast Lane",
+          "displayName": "Fast Lane",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/bb2a4828-46eb-8cd1-e765-15848195d751/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Overdrive",
+          "displayName": "Overdrive",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/bb2a4828-46eb-8cd1-e765-15848195d751/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Fade",
+      "displayName": "Fade",
+      "uuid": "dade69b4-4f5a-8528-247b-219e5a1facd6",
+      "iconUrl": "https://media.valorant-api.com/agents/dade69b4-4f5a-8528-247b-219e5a1facd6/displayicon.png",
+      "abilities": [
+        {
+          "id": "Seize",
+          "displayName": "Seize",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/dade69b4-4f5a-8528-247b-219e5a1facd6/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Haunt",
+          "displayName": "Haunt",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/dade69b4-4f5a-8528-247b-219e5a1facd6/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Prowler",
+          "displayName": "Prowler",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/dade69b4-4f5a-8528-247b-219e5a1facd6/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Nightfall",
+          "displayName": "Nightfall",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/dade69b4-4f5a-8528-247b-219e5a1facd6/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Harbor",
+      "displayName": "Harbor",
+      "uuid": "95b78ed7-4637-86d9-7e41-71ba8c293152",
+      "iconUrl": "https://media.valorant-api.com/agents/95b78ed7-4637-86d9-7e41-71ba8c293152/displayicon.png",
+      "abilities": [
+        {
+          "id": "High Tide",
+          "displayName": "High Tide",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/95b78ed7-4637-86d9-7e41-71ba8c293152/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Storm Surge",
+          "displayName": "Storm Surge",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/95b78ed7-4637-86d9-7e41-71ba8c293152/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Cove",
+          "displayName": "Cove",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/95b78ed7-4637-86d9-7e41-71ba8c293152/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Reckoning",
+          "displayName": "Reckoning",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/95b78ed7-4637-86d9-7e41-71ba8c293152/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Gekko",
+      "displayName": "Gekko",
+      "uuid": "e370fa57-4757-3604-3648-499e1f642d3f",
+      "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/displayicon.png",
+      "abilities": [
+        {
+          "id": "Wingman",
+          "displayName": "Wingman",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Dizzy",
+          "displayName": "Dizzy",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Mosh Pit",
+          "displayName": "Mosh Pit",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Thrash",
+          "displayName": "Thrash",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/e370fa57-4757-3604-3648-499e1f642d3f/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Deadlock",
+      "displayName": "Deadlock",
+      "uuid": "cc8b64c8-4b25-4ff9-6e7f-37b4da43d235",
+      "iconUrl": "https://media.valorant-api.com/agents/cc8b64c8-4b25-4ff9-6e7f-37b4da43d235/displayicon.png",
+      "abilities": [
+        {
+          "id": "Sonic Sensor",
+          "displayName": "Sonic Sensor",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/cc8b64c8-4b25-4ff9-6e7f-37b4da43d235/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Barrier Mesh",
+          "displayName": "Barrier Mesh",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/cc8b64c8-4b25-4ff9-6e7f-37b4da43d235/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "GravNet",
+          "displayName": "GravNet",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/cc8b64c8-4b25-4ff9-6e7f-37b4da43d235/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Annihilation",
+          "displayName": "Annihilation",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/cc8b64c8-4b25-4ff9-6e7f-37b4da43d235/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Clove",
+      "displayName": "Clove",
+      "uuid": "1dbf2edd-4729-0984-3115-daa5eed44993",
+      "iconUrl": "https://media.valorant-api.com/agents/1dbf2edd-4729-0984-3115-daa5eed44993/displayicon.png",
+      "abilities": [
+        {
+          "id": "Pick-me-up",
+          "displayName": "Pick-me-up",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/1dbf2edd-4729-0984-3115-daa5eed44993/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Ruse",
+          "displayName": "Ruse",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/1dbf2edd-4729-0984-3115-daa5eed44993/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Not Dead Yet",
+          "displayName": "Not Dead Yet",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/1dbf2edd-4729-0984-3115-daa5eed44993/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Meddle",
+          "displayName": "Meddle",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/1dbf2edd-4729-0984-3115-daa5eed44993/abilities/ability1/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Tejo",
+      "displayName": "Tejo",
+      "uuid": "b444168c-4e35-8076-db47-ef9bf368f384",
+      "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/displayicon.png",
+      "abilities": [
+        {
+          "id": "Guided Salvo",
+          "displayName": "Guided Salvo",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Special Delivery",
+          "displayName": "Special Delivery",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Armageddon",
+          "displayName": "Armageddon",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Stealth Drone",
+          "displayName": "Stealth Drone",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/b444168c-4e35-8076-db47-ef9bf368f384/abilities/grenade/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Waylay",
+      "displayName": "Waylay",
+      "uuid": "df1cb487-4902-002e-5c17-d28e83e78588",
+      "iconUrl": "https://media.valorant-api.com/agents/df1cb487-4902-002e-5c17-d28e83e78588/displayicon.png",
+      "abilities": [
+        {
+          "id": "Refract",
+          "displayName": "Refract",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/df1cb487-4902-002e-5c17-d28e83e78588/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Saturate",
+          "displayName": "Saturate",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/df1cb487-4902-002e-5c17-d28e83e78588/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Lightspeed",
+          "displayName": "Lightspeed",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/df1cb487-4902-002e-5c17-d28e83e78588/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Convergent Paths",
+          "displayName": "Convergent Paths",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/df1cb487-4902-002e-5c17-d28e83e78588/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Veto",
+      "displayName": "Veto",
+      "uuid": "92eeef5d-43b5-1d4a-8d03-b3927a09034b",
+      "iconUrl": "https://media.valorant-api.com/agents/92eeef5d-43b5-1d4a-8d03-b3927a09034b/displayicon.png",
+      "abilities": [
+        {
+          "id": "Interceptor",
+          "displayName": "Interceptor",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/92eeef5d-43b5-1d4a-8d03-b3927a09034b/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Crosscut",
+          "displayName": "Crosscut",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/92eeef5d-43b5-1d4a-8d03-b3927a09034b/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Evolution",
+          "displayName": "Evolution",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/92eeef5d-43b5-1d4a-8d03-b3927a09034b/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Chokehold",
+          "displayName": "Chokehold",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/92eeef5d-43b5-1d4a-8d03-b3927a09034b/abilities/ability1/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Vyse",
+      "displayName": "Vyse",
+      "uuid": "efba5359-4016-a1e5-7626-b1ae76895940",
+      "iconUrl": "https://media.valorant-api.com/agents/efba5359-4016-a1e5-7626-b1ae76895940/displayicon.png",
+      "abilities": [
+        {
+          "id": "Shear",
+          "displayName": "Shear",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/efba5359-4016-a1e5-7626-b1ae76895940/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Arc Rose",
+          "displayName": "Arc Rose",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/efba5359-4016-a1e5-7626-b1ae76895940/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Razorvine",
+          "displayName": "Razorvine",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/efba5359-4016-a1e5-7626-b1ae76895940/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Steel Garden",
+          "displayName": "Steel Garden",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/efba5359-4016-a1e5-7626-b1ae76895940/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Jett",
+      "displayName": "Jett",
+      "uuid": "add6443a-41bd-e414-f6ad-e58d267f4e95",
+      "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/displayicon.png",
+      "abilities": [
+        {
+          "id": "Updraft",
+          "displayName": "Updraft",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Tailwind",
+          "displayName": "Tailwind",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Cloudburst",
+          "displayName": "Cloudburst",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Blade Storm",
+          "displayName": "Blade Storm",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Drift",
+          "displayName": "Drift",
+          "slot": "Passive",
+          "iconUrl": "https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/abilities/passive/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Reyna",
+      "displayName": "Reyna",
+      "uuid": "a3bfb853-43b2-7238-a4f1-ad90e9e46bcc",
+      "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/displayicon.png",
+      "abilities": [
+        {
+          "id": "Devour",
+          "displayName": "Devour",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Dismiss",
+          "displayName": "Dismiss",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Leer",
+          "displayName": "Leer",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Empress",
+          "displayName": "Empress",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/a3bfb853-43b2-7238-a4f1-ad90e9e46bcc/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Omen",
+      "displayName": "Omen",
+      "uuid": "8e253930-4c05-31dd-1b6c-968525494517",
+      "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/displayicon.png",
+      "abilities": [
+        {
+          "id": "Paranoia",
+          "displayName": "Paranoia",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Dark Cover",
+          "displayName": "Dark Cover",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Shrouded Step",
+          "displayName": "Shrouded Step",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "From the Shadows",
+          "displayName": "From the Shadows",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/8e253930-4c05-31dd-1b6c-968525494517/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Chamber",
+      "displayName": "Chamber",
+      "uuid": "22697a3d-45bf-8dd7-4fec-84a9e28c69d7",
+      "iconUrl": "https://media.valorant-api.com/agents/22697a3d-45bf-8dd7-4fec-84a9e28c69d7/displayicon.png",
+      "abilities": [
+        {
+          "id": "Rendezvous",
+          "displayName": "Rendezvous",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/22697a3d-45bf-8dd7-4fec-84a9e28c69d7/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Trademark",
+          "displayName": "Trademark",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/22697a3d-45bf-8dd7-4fec-84a9e28c69d7/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Headhunter",
+          "displayName": "Headhunter",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/22697a3d-45bf-8dd7-4fec-84a9e28c69d7/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Tour De Force",
+          "displayName": "Tour De Force",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/22697a3d-45bf-8dd7-4fec-84a9e28c69d7/abilities/ultimate/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Iso",
+      "displayName": "Iso",
+      "uuid": "0e38b510-41a8-5780-5e8f-568b2a4f2d6c",
+      "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/displayicon.png",
+      "abilities": [
+        {
+          "id": "Undercut",
+          "displayName": "Undercut",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Kill Contract",
+          "displayName": "Kill Contract",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/abilities/ultimate/displayicon.png"
+        },
+        {
+          "id": "Double Tap",
+          "displayName": "Double Tap",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Contingency",
+          "displayName": "Contingency",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/0e38b510-41a8-5780-5e8f-568b2a4f2d6c/abilities/grenade/displayicon.png"
+        }
+      ]
+    },
+    {
+      "id": "Miks",
+      "displayName": "Miks",
+      "uuid": "7c8a4701-4de6-9355-b254-e09bc2a34b72",
+      "iconUrl": "https://media.valorant-api.com/agents/7c8a4701-4de6-9355-b254-e09bc2a34b72/displayicon.png",
+      "abilities": [
+        {
+          "id": "M-pulse",
+          "displayName": "M-pulse",
+          "slot": "Grenade",
+          "iconUrl": "https://media.valorant-api.com/agents/7c8a4701-4de6-9355-b254-e09bc2a34b72/abilities/grenade/displayicon.png"
+        },
+        {
+          "id": "Waveform",
+          "displayName": "Waveform",
+          "slot": "Ability2",
+          "iconUrl": "https://media.valorant-api.com/agents/7c8a4701-4de6-9355-b254-e09bc2a34b72/abilities/ability2/displayicon.png"
+        },
+        {
+          "id": "Harmonize",
+          "displayName": "Harmonize",
+          "slot": "Ability1",
+          "iconUrl": "https://media.valorant-api.com/agents/7c8a4701-4de6-9355-b254-e09bc2a34b72/abilities/ability1/displayicon.png"
+        },
+        {
+          "id": "Bassquake",
+          "displayName": "Bassquake",
+          "slot": "Ultimate",
+          "iconUrl": "https://media.valorant-api.com/agents/7c8a4701-4de6-9355-b254-e09bc2a34b72/abilities/ultimate/displayicon.png"
+        }
+      ]
+    }
+  ]
+}

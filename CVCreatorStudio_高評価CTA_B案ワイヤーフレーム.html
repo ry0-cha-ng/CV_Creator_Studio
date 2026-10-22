@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>高評価CTA B案 ワイヤーフレーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F4F5F7; --surface:#FFFFFF; --line:#D9DEE5; --text:#1C2027; --sub:#4A525E; --muted:#6B7482;
+  --blue:#1D5FD1; --blue-soft:#DCE8FB; --orange:#E07B00; --orange-soft:#FFF1DE; --red:#C9302C; --red-soft:#FCE9E8;
+  --teal:#0F7B6C; --chip:#E3E7ED;
+  --cv-bg:#0F1923; --cv-text:#ECE8E1; --cv-accent:#FF4655;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Noto Sans JP',system-ui,sans-serif;line-height:1.6}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.wrap{max-width:1360px;margin:0 auto;padding:40px 24px 80px}
+header.top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:28px}
+h1{margin:0;font-size:30px;font-weight:900;line-height:1.3}
+h2{margin:0 0 4px;font-size:22px;font-weight:900}
+h3{margin:0;font-size:16px;font-weight:900}
+.eyebrow{font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:3px 10px;border-radius:6px;background:var(--chip);font-size:13px;font-weight:700}
+.chip.blue{background:var(--blue-soft);color:#123F8C}
+.chip.orange{background:var(--orange-soft);color:#8A4A00}
+section{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px;margin-bottom:24px}
+.sec-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px 16px;margin-bottom:20px}
+.sec-head p{margin:0;font-size:14px;color:var(--sub)}
+.num{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:15px;background:var(--blue);color:#fff;font-size:15px;font-weight:900;margin-right:10px;vertical-align:2px}
+
+.grid-main{display:grid;grid-template-columns:minmax(0,540px) minmax(0,1fr);gap:32px;align-items:start}
+@media (max-width:980px){.grid-main{grid-template-columns:minmax(0,1fr)}}
+
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-bottom:14px}
+.seg{display:inline-flex;border:1px solid #C3CAD4;border-radius:10px;overflow:hidden}
+.seg button{min-height:40px;padding:0 14px;border:0;background:#fff;font:inherit;font-size:14px;font-weight:700;color:var(--text);cursor:pointer}
+.seg button+button{border-left:1px solid #C3CAD4}
+.seg button[aria-pressed="true"]{background:var(--text);color:#fff}
+.btn{min-height:40px;padding:0 16px;border:0;border-radius:10px;background:var(--blue);color:#fff;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.btn:focus-visible,.seg button:focus-visible,input:focus-visible{outline:3px solid #7CB3FF;outline-offset:2px}
+label.tg{display:inline-flex;align-items:center;gap:6px;font-size:14px;cursor:pointer}
+label.tg input{width:18px;height:18px;accent-color:var(--blue)}
+.seek{display:flex;align-items:center;gap:10px;width:100%;font-size:13px;color:var(--sub)}
+.seek input{flex:1;accent-color:var(--orange)}
+.readout{font-size:13px;font-weight:700;color:var(--sub)}
+
+.phone-frame{width:100%;max-width:540px;border:6px solid var(--text);border-radius:30px;overflow:hidden;background:#000}
+.phone-scale{position:relative;width:100%;overflow:hidden}
+.phone-scale>.ph{position:absolute;left:0;top:0;transform-origin:0 0}
+
+/* phone internals (1080x1920 coordinate space) */
+.ph{width:1080px;height:1920px;overflow:hidden;font-family:'Noto Sans JP',sans-serif;background:repeating-linear-gradient(135deg,#2A303A 0 22px,#252B34 22px 44px)}
+.ph .a{position:absolute}
+.ph .video{left:0;top:656px;width:1080px;height:608px;background:#59636F;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#E3E7ED;font-size:30px;font-weight:700}
+.ph .video small{font-family:'JetBrains Mono',monospace;font-size:20px;color:#C3CAD4;font-weight:500}
+.ph .result{left:72px;top:1112px;padding:8px 18px;background:rgba(15,25,35,.8);font-size:32px;font-weight:900;letter-spacing:2px;color:#fff;border-left:6px solid var(--cv-accent)}
+.ph .h1g{display:flex;align-items:center;gap:10px;opacity:.85;color:#fff;font-weight:700}
+.ph .h1g i{font-style:normal;display:flex;align-items:center;justify-content:center;border:3px solid #fff;border-radius:8px;font-weight:900}
+.ph .cta{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;border-radius:20px;background:rgba(15,25,35,.72);border:2px solid rgba(236,232,225,.18);padding:14px 28px;white-space:nowrap}
+.ph .cta .l1{font-weight:700;color:rgba(236,232,225,.82);letter-spacing:.02em}
+.ph .cta .l2{font-weight:900;color:var(--cv-text)}
+.ph .slot{position:relative;display:inline-block;text-align:center}
+.ph .thumb{display:inline-block;transform-origin:50% 50%}
+.ph .range{position:absolute;border:3px dashed #FF9F1C;border-radius:8px}
+.ph .ctaA{left:72px;top:1288px;width:768px;height:120px;padding:6px 18px;border-radius:12px;background:rgba(15,25,35,.62)}
+.ph .ctaA .l1{font-size:48px;line-height:53px;font-weight:900;color:#fff}
+.ph .ctaA .l2{margin-top:10px;font-size:40px;line-height:44px;font-weight:900;color:#fff}
+.ph .crop{top:0;width:49px;height:1920px;background:rgba(0,0,0,.55)}
+.ph .zone{border:3px dashed #FF6B66}
+.ph .pill{border-radius:46px;background:rgba(255,255,255,.16)}
+.ph .ic{width:64px;height:64px;border-radius:32px;border:4px solid rgba(255,255,255,.8)}
+.ph .tag{padding:4px 12px;border-radius:6px;background:var(--red);color:#fff;font-size:22px;font-weight:700}
+.ph .dim{border-top:3px solid #7CB3FF;border-bottom:3px solid #7CB3FF;width:26px}
+.ph .dimt{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#9CC5FF}
+.ph .ctaBox{outline:3px solid #7CB3FF;outline-offset:4px}
+.ph .warn{border:6px solid #FFB020;border-radius:70px}
+.ph .warnt{padding:8px 14px;border-radius:8px;background:#FFB020;color:#1C2027;font-size:26px;font-weight:900}
+
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 10px;border-bottom:1px solid var(--line)}
+th{font-size:13px;color:var(--sub);font-weight:700;background:#F8F9FA}
+td:first-child{font-weight:700;white-space:nowrap}
+.tbl-scroll{overflow-x:auto}
+.changed{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--orange-soft);color:#8A4A00;font-size:11px;font-weight:700;vertical-align:1px}
+.kept{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;background:var(--chip);color:var(--sub);font-size:11px;font-weight:700;vertical-align:1px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:14px;font-size:13px;color:var(--sub)}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.sw{display:inline-block;width:28px;height:14px}
+
+.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+@media (max-width:860px){.states{grid-template-columns:minmax(0,1fr)}}
+.state{border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.state-h{display:flex;justify-content:space-between;align-items:baseline;padding:12px 16px}
+.state-h b{font-size:18px}
+.state-h span{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--orange)}
+.zoom{position:relative;height:220px;background:#20262E;overflow:hidden}
+.zoom .row{position:absolute;left:0;right:0;top:66px;height:105px;display:flex;justify-content:center;align-items:center;white-space:nowrap;font-size:90px;line-height:105px;font-weight:900;color:var(--cv-text)}
+.zoom .l1edge{position:absolute;left:0;right:0;top:48px;border-top:2px dashed #6B7482}
+.zoom .base{position:absolute;left:0;right:0;top:152px;border-top:1px solid #3FC1A8}
+.zoom .lbl{position:absolute;font-size:12px}
+.zoom .zslot{position:relative;display:inline-block;width:117px;height:105px;text-align:center}
+.zoom .zr{position:absolute;left:4px;top:-17px;width:109px;height:112px;border:2px dashed #FF9F1C;border-radius:8px}
+.zoom .zg{position:absolute;left:13px;top:8px;width:90px;height:90px;border:2px dotted #8A94A3;border-radius:6px}
+.zoom .zt{display:inline-block;font-size:78px;line-height:105px;transform-origin:50% 50%}
+.state-b{padding:12px 16px;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}
+.state-b dt{color:var(--muted)} .state-b dd{margin:0;font-family:'JetBrains Mono',monospace;font-weight:700}
+.state-b p{grid-column:1/-1;margin:6px 0 0;color:var(--sub)}
+.timeline{margin-top:22px;overflow-x:auto}
+.timeline svg{display:block;min-width:760px;width:100%;height:auto}
+
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
+@media (max-width:860px){.two{grid-template-columns:minmax(0,1fr)}}
+.panel{border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.field{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:700;color:var(--sub)}
+.field input[type=text]{height:40px;padding:0 12px;border:1px solid #C3CAD4;border-radius:8px;font:inherit;font-size:15px;font-weight:500;color:var(--text);min-width:0}
+.tokrow{display:flex;gap:6px;align-items:center}
+.tokrow input{flex:1 1 0}
+.token{flex-shrink:0;height:40px;padding:0 10px;display:flex;align-items:center;gap:4px;border-radius:8px;background:var(--orange-soft);border:1px solid var(--orange);font-size:18px}
+.token small{font-size:11px;font-weight:700;color:#8A4A00}
+.tgrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--bg)}
+.readonly{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+ul.notes{margin:0;padding-left:18px;font-size:14px;color:var(--sub)}
+ul.notes li{margin:4px 0}
+
+.compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
+@media (max-width:760px){.compare{grid-template-columns:minmax(0,1fr)}}
+.compare .phone-frame{max-width:380px;margin:0 auto}
+.compare h3{margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.compare .cap{margin-top:12px;font-size:14px;color:var(--sub)}
+
+.checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 28px}
+@media (max-width:860px){.checks{grid-template-columns:minmax(0,1fr)}}
+.check{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:var(--bg);font-size:14px}
+.check input{margin-top:3px;width:18px;height:18px;flex-shrink:0;accent-color:var(--teal)}
+.check b{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal);margin-right:6px}
+.open{margin-top:22px;padding:18px 20px;border-radius:12px;background:#FFF8EC;border:1px solid #F2C46D}
+.open h3{margin-bottom:8px;color:#8A4A00}
+.foot{font-size:12px;color:var(--muted);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <div class="eyebrow">CV CREATOR STUDIO ／ YOUTUBE短尺 S4 発動イメージ＋CTA</div>
+    <h1>高評価CTA B案（映像上配置）ワイヤーフレーム</h1>
+  </div>
+  <div class="chips">
+    <span class="chip">1080×1920 基準</span>
+    <span class="chip">yt-global / yt-ja</span>
+    <span class="chip">S4末尾 約2.0秒</span>
+    <span class="chip blue">採用：B案</span>
+  </div>
+</header>
+
+<!-- 1. Layout -->
+<section aria-labelledby="s1">
+  <div class="sec-head">
+    <h2 id="s1"><span class="num">1</span>S4 画面レイアウト</h2>
+    <p>CTAを映像上の空白帯へ単独配置。赤破線は実機スクリーンショットから推定したYouTube UI域。</p>
+  </div>
+  <div class="grid-main">
+    <div>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="言語">
+          <button type="button" data-lang="EN" aria-pressed="true">EN</button>
+          <button type="button" data-lang="JA" aria-pressed="false">JA</button>
+        </div>
+        <label class="tg"><input type="checkbox" id="optOverlay" checked>実機UIを重ねる</label>
+        <label class="tg"><input type="checkbox" id="optGuides" checked>寸法・可動範囲</label>
+      </div>
+      <div class="phone-frame"><div class="phone-scale" id="mainPhone"></div></div>
+      <div class="controls" style="margin-top:14px">
+        <button type="button" class="btn" id="playBtn">👍 バウンス再生</button>
+        <label class="tg"><input type="checkbox" id="optMotion" checked>👍を軽く弾ませる</label>
+        <div class="seek"><label for="seek">シーク</label><input type="range" id="seek" min="0" max="119" step="1" value="0"></div>
+        <div class="readout mono" id="readout"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>要素</th><th>位置・サイズ（1080基準）</th><th>仕様</th></tr></thead>
+        <tbody>
+          <tr><td>CTAブロック<span class="changed">変更</span></td><td class="mono">x 120–960<br>y 448–612<br>840×164</td><td>映像上の空白帯に<b>中央揃え</b>。下端＝映像上端−44px（映像矩形に追従）。角丸20、背景 #0F1923 72%、枠線 2px #ECE8E1 18%。ブランド要素は入れない</td></tr>
+          <tr><td>1行目<span class="changed">変更</span></td><td class="mono">EN 40px / 700<br>JA 36px / 700</td><td>前置き。#ECE8E1 82%。<span class="mono">TRY IT NEXT MATCH.</span> ／ <span class="mono">次の試合で使おう。</span></td></tr>
+          <tr><td>2行目<span class="changed">変更</span></td><td class="mono">EN 60px / 900<br>JA 52px / 900<br>行間 12px</td><td><b>主CTA（最大の文字）</b>。#ECE8E1 100%。<span class="mono">LIKE 👍 TO REVISIT.</span> ／ <span class="mono">高評価 👍 であとから見返そう。</span></td></tr>
+          <tr><td>👍</td><td class="mono">2行目の文字サイズ相当<br>固定幅スロット EN 78 / JA 68</td><td>唯一の可動要素（§2）。変形しても文字・行高・ブロックは動かない</td></tr>
+          <tr><td>ゲーム映像<span class="kept">維持</span></td><td class="mono">y 656–1264</td><td>位置・サイズ変更なし。CTAで覆わない</td></tr>
+          <tr><td>03 RESULT<span class="kept">維持</span></td><td class="mono">映像内 既存位置</td><td>見た目・位置変更なし</td></tr>
+          <tr><td>H1gher<span class="changed">変更</span></td><td class="mono">x 72・y 1290<br>高さ40・不透明度85%</td><td>S4表示中は映像直下（映像下端+26）へ。下部UIまで約110px空け、チャンネルアイコンと重ねない</td></tr>
+          <tr><td>余白</td><td class="mono">上 75 / 下 44</td><td>上部UI下端（推定 y≈373）〜CTA：約75px。CTA〜映像上端：44px</td></tr>
+          <tr><td>表示しない</td><td>—</td><td>CVアイコン、ClutchVault名・URL、プロフィール案内、旧CTA帯、独立Brand Lockup、クリック風ボタン、高評価ボタンへの固定矢印</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="legend">
+        <span><span class="sw" style="border:2px dashed #FF6B66"></span>実機UI域（推定）</span>
+        <span><span class="sw" style="background:rgba(0,0,0,.55)"></span>縦長端末で切れる左右 各49px</span>
+        <span><span class="sw" style="border:2px dashed #FF9F1C"></span>👍 可動範囲</span>
+        <span><span class="sw" style="border-top:2px solid #7CB3FF;border-bottom:2px solid #7CB3FF;height:10px"></span>間隔（px）</span>
+      </div>
+      <p class="foot">実機UI域：上部 〜y≈373 ／ 下部 y≈1440〜 ／ 右列 x≈880–1031・y≈1010–1740。投稿者表示（YT Studio経由）のスクリーンショットから換算した推定値。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Bounce -->
+<section aria-labelledby="s2">
+  <div class="sec-head">
+    <h2 id="s2"><span class="num">2</span>👍 単発バウンス（1.5倍拡大図）</h2>
+    <p>CTA開始 t=0。文字・👍・背景は初フレームから100%表示。移動量は1080基準px（上が負）。</p>
+  </div>
+  <div class="states" id="states"></div>
+  <div class="timeline">
+    <svg viewBox="0 0 1366 210" role="img" aria-label="👍の縦移動。0.15秒まで0、0.30秒で−8px、0.50秒で0へ戻り以降静止">
+      <rect x="80" y="20" width="96" height="150" fill="#EEF1F4"/>
+      <rect x="176" y="20" width="96" height="150" fill="#FFF1DE"/>
+      <rect x="272" y="20" width="128" height="150" fill="#FFE6C4"/>
+      <rect x="400" y="20" width="960" height="150" fill="#EEF1F4"/>
+      <text x="128" y="38" font-size="12" text-anchor="middle" fill="#4A525E">静止</text>
+      <text x="224" y="38" font-size="12" text-anchor="middle" fill="#8A4A00">上へ ease-out</text>
+      <text x="336" y="38" font-size="12" text-anchor="middle" fill="#8A4A00">戻る ease-in-out</text>
+      <text x="880" y="38" font-size="12" text-anchor="middle" fill="#4A525E">元位置で静止（反復・二度跳ねなし）→ 区間末尾で文字と同時に即時非表示</text>
+      <line x1="80" y1="150" x2="1360" y2="150" stroke="#9AA3AF"/>
+      <line x1="80" y1="60" x2="1360" y2="60" stroke="#D0D5DC" stroke-dasharray="4 4"/>
+      <text x="72" y="154" font-size="12" text-anchor="end" fill="#4A525E">0</text>
+      <text x="72" y="64" font-size="12" text-anchor="end" fill="#4A525E">−8</text>
+      <path d="M80 150 L176 150 C195 96 214 60 272 60 C326 60 346 150 400 150 L1360 150" fill="none" stroke="#E07B00" stroke-width="3"/>
+      <g stroke="#6B7482" stroke-dasharray="3 3"><line x1="176" y1="20" x2="176" y2="170"/><line x1="272" y1="20" x2="272" y2="170"/><line x1="400" y1="20" x2="400" y2="170"/><line x1="1349" y1="20" x2="1349" y2="170"/></g>
+      <g font-size="12" text-anchor="middle" fill="#1C2027"><text x="80" y="190">0.00</text><text x="176" y="190">0.15</text><text x="272" y="190">0.30</text><text x="400" y="190">0.50</text><text x="720" y="190" fill="#6B7482">1.00</text><text x="1335" y="190" text-anchor="end">終了直前</text></g>
+      <text x="80" y="206" font-size="11" fill="#6B7482">30fps 60フレーム ／ 60fps 120フレーム。区間0.50秒未満ならバウンス省略・静止表示</text>
+      <line id="tlLine" x1="80" y1="16" x2="80" y2="172" stroke="#1D5FD1" stroke-width="2"/>
+      <circle id="tlDot" cx="80" cy="150" r="6" fill="#1D5FD1"/>
+    </svg>
+  </div>
+</section>
+
+<!-- 3. Settings -->
+<section aria-labelledby="s3">
+  <div class="sec-head">
+    <h2 id="s3"><span class="num">3</span>CTA設定パネル</h2>
+    <p>既存のCTA設定内に追加。位置・キーフレームの編集UIは追加しない。</p>
+  </div>
+  <div class="two">
+    <div class="panel" aria-label="CTA設定（ワイヤーフレーム）">
+      <div style="display:flex;justify-content:space-between;align-items:center"><h3>CTA設定</h3><span class="chip">短尺テンプレート · YouTube</span></div>
+      <div class="field">CTAの目的
+        <div class="seg" role="group" aria-label="CTAの目的" style="display:grid;grid-template-columns:1fr 1fr">
+          <button type="button" aria-pressed="true">高評価して見返す</button>
+          <button type="button" aria-pressed="false">ClutchVaultへ案内</button>
+        </div>
+      </div>
+      <div class="seg" role="group" aria-label="文言の言語" style="align-self:flex-start">
+        <button type="button" data-plang="EN" aria-pressed="true">EN</button>
+        <button type="button" data-plang="JA" aria-pressed="false">JA</button>
+      </div>
+      <label class="field">1行目<input type="text" id="fL1"></label>
+      <div class="field">2行目（👍は固定トークン）
+        <div class="tokrow">
+          <input type="text" id="fL2a" aria-label="2行目 👍の前">
+          <span class="token" title="固定トークン（削除・複製不可）">👍<small>固定</small></span>
+          <input type="text" id="fL2b" aria-label="2行目 👍の後">
+        </div>
+      </div>
+      <label class="tgrow"><span><b style="font-size:15px">👍を軽く弾ませる</b><br><span style="font-size:12px;color:var(--muted)">OFFでも文言・位置・表示時間は同じ（静止比較用）</span></span><input type="checkbox" id="pMotion" checked style="width:22px;height:22px;accent-color:var(--orange)"></label>
+      <div class="readonly"><span>配置：映像上・中央揃え（固定）</span><span>表示区間：S4末尾 約2.0秒</span></div>
+    </div>
+    <div>
+      <ul class="notes">
+        <li>入力内容は §1 のプレビューに即時反映（このワイヤーフレーム内のみ・保存なし）。</li>
+        <li>CTA目的・言語ごとに文言を保存し、切り替えで互いの値を上書きしない。</li>
+        <li>👍は1つの固定トークン。前後の文言だけ編集でき、文字と画像で二重に描かない。</li>
+        <li>新規YouTube短尺は「高評価して見返す」・動きONが初期値。CTAモード未保存の既存プロジェクトは従来のClutchVault誘導として開く。</li>
+        <li>配信プリセットがYouTube以外なら本モードを適用しない（TikTok等へ文言が混入しない）。</li>
+        <li>CTA目的・文言・動きON/OFFは既存の投稿・クリエイティブ属性へ記録。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Compare -->
+<section aria-labelledby="s4">
+  <div class="sec-head">
+    <h2 id="s4"><span class="num">4</span>変更前後（実機UI重ね）</h2>
+    <p>CTAを下部UIの塊から切り離し、周囲に競合要素のない位置へ。</p>
+  </div>
+  <div class="compare">
+    <div>
+      <h3>変更前：映像直下 <span class="chip">v2.7 初版</span></h3>
+      <div class="phone-frame"><div class="phone-scale" id="phoneA"></div></div>
+      <p class="cap">CTA・H1gher・チャンネル行・タイトルが縦に密着。CTA下端〜チャンネル行は約30px、H1gherがチャンネルアイコンと重なる。</p>
+    </div>
+    <div>
+      <h3>変更後：映像上（B案） <span class="chip blue">採用</span></h3>
+      <div class="phone-frame" style="border-color:var(--blue)"><div class="phone-scale" id="phoneB"></div></div>
+      <p class="cap">空白帯に単独配置し、行動行を最大に。映像中央から視線を少し上げるだけで読め、S1フックの文字位置とも揃う。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Checks -->
+<section aria-labelledby="s5">
+  <div class="sec-head">
+    <h2 id="s5"><span class="num">5</span>確認項目</h2>
+    <p>チェックはこのページ内のみ（保存されません）。</p>
+  </div>
+  <div class="checks">
+    <label class="check"><input type="checkbox"><span><b>B-01</b>CTAが上部UI（チップ列）と重ならない。<b style="color:inherit;font-family:inherit">一般視聴者アカウント</b>の実機表示でも確認</span></label>
+    <label class="check"><input type="checkbox"><span><b>B-02</b>CTAの下端が映像上端−44pxに追従し、ゲーム映像・03 RESULT・HUDを覆わない</span></label>
+    <label class="check"><input type="checkbox"><span><b>B-03</b>EN・JAとも2行のまま840px内に収まる（JA 2行目52pxは実幅で確認）</span></label>
+    <label class="check"><input type="checkbox"><span><b>B-04</b>H1gher（y1290）がチャンネルアイコン・下部UIと重ならない</span></label>
+    <label class="check"><input type="checkbox"><span><b>B-05</b>👍の頂点（−8px・×1.10）でも1行目の文字と重ならず、クリップされない</span></label>
+    <label class="check"><input type="checkbox"><span><b>B-06</b>縦長端末で左右が切れても、CTA全文が見える（x120–960）</span></label>
+    <label class="check"><input type="checkbox"><span><b>LIKE-CTA-02/03</b>S4末尾約2秒（60f/120f）で全文が初フレームから読め、👍だけが1回動く</span></label>
+    <label class="check"><input type="checkbox"><span><b>LIKE-CTA-05</b>0.00・0.15・0.30・0.50秒・終了直前でプレビュー／シーク／書き出しが一致</span></label>
+    <label class="check"><input type="checkbox"><span><b>LIKE-CTA-06</b>モード・文言・動きON/OFFが保存後に復元され、旧CTAと二重表示されない</span></label>
+    <label class="check"><input type="checkbox"><span><b>LIKE-CTA-07</b>ClutchVault誘導モード・旧T-STD・T-GUIDE・TikTok・PNG/X用カードに波及しない</span></label>
+  </div>
+  <div class="open">
+    <h3>実装前に決めておくこと</h3>
+    <ul class="notes">
+      <li><b>H1gherの移動範囲：</b>このワイヤーフレームではS4表示中のみ y1290 へ移動。他シーン（y1420）でもチャンネルアイコンと重なるため、全シーンで移すかは別判断。</li>
+      <li><b>👍の振れ幅：</b>2行目が60pxになり、−8px・×1.10は相対的に控えめに見える。現行値のまま実機で確認し、弱ければ比例（約−12px）を検討。</li>
+      <li><b>label.meta（y210）：</b>実機では上部の「ショート」ヘッダーの下に隠れている可能性がある。</li>
+      <li><b>実機UIの値：</b>投稿者表示から換算した推定値。端末・表示モードで変動するため、固定座標ではなく映像矩形基準で計算する。</li>
+    </ul>
+  </div>
+  <p class="foot">本ワイヤーフレームは実装指示の入力。画面・コンポーネント名の確定を意味しない。</p>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var state = { lang:'EN', overlay:true, guides:true, motion:true, frame:0,
+    text:{ EN:{l1:'TRY IT NEXT MATCH.', l2a:'LIKE ', l2b:' TO REVISIT.'},
+           JA:{l1:'次の試合で使おう。', l2a:'高評価 ', l2b:' であとから見返そう。'} },
+    plang:'EN' };
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function pre(s){ return esc(s).replace(/ /g,'&nbsp;'); }
+
+  function overlayHTML(){
+    return ''+
+    '<div class="a crop" style="left:0"></div><div class="a crop" style="left:1031px"></div>'+
+    '<div class="a zone" style="left:49px;top:0;width:982px;height:373px"></div>'+
+    '<div class="a" style="left:90px;top:100px;font-size:34px;font-weight:700;color:rgba(255,255,255,.9)">4:25</div>'+
+    '<div class="a" style="left:90px;top:182px;font-size:46px;font-weight:700;color:rgba(255,255,255,.9)">ショート</div>'+
+    '<div class="a" style="left:90px;top:278px;display:flex;gap:22px"><div class="pill" style="width:380px;height:92px"></div><div class="pill" style="width:250px;height:92px"></div><div class="pill" style="width:260px;height:92px"></div></div>'+
+    '<div class="a zone" style="left:880px;top:1010px;width:151px;height:740px;display:flex;flex-direction:column;align-items:center;justify-content:space-evenly"><div class="ic"></div><div class="ic"></div><div class="ic"></div><div class="ic"></div><div class="ic"></div></div>'+
+    '<div class="a zone" style="left:49px;top:1440px;width:982px;height:480px"></div>'+
+    '<div class="a" style="left:72px;top:1448px;display:flex;align-items:center;gap:20px"><div style="width:76px;height:76px;border-radius:38px;background:rgba(255,255,255,.85)"></div><div style="font-size:38px;font-weight:700;color:#fff">@H1gher_Lineups</div><div class="pill" style="width:230px;height:70px;background:rgba(255,255,255,.22)"></div></div>'+
+    '<div class="a" style="left:72px;top:1552px;width:760px;height:40px;border-radius:6px;background:rgba(255,255,255,.4)"></div>'+
+    '<div class="a pill" style="left:72px;top:1612px;width:700px;height:58px"></div>'+
+    '<div class="a" style="left:72px;top:1700px;width:440px;height:34px;border-radius:6px;border:2px dashed rgba(255,255,255,.45)"></div>'+
+    '<div class="a" style="left:72px;top:1772px;width:760px;height:96px;border-radius:48px;border:2px dashed rgba(255,255,255,.45)"></div>'+
+    '<div class="a" style="left:540px;top:1702px;font-size:22px;color:rgba(255,255,255,.75)">← 投稿者表示（YT Studio）のみの行</div>'+
+    '<div class="a" style="left:0;top:1912px;width:1080px;height:8px;background:#FF3B30"></div>'+
+    '<div class="a tag" style="left:60px;top:8px">実機の上部UI（推定 〜y≈373）</div>'+
+    '<div class="a tag" style="left:60px;top:1878px">実機の下部UI（推定 y≈1440〜）</div>';
+  }
+
+  function h1g(left, top, size){
+    var f = size===40 ? 26 : 30, b = size===40 ? 16 : 20;
+    return '<div class="a h1g" style="left:'+left+'px;top:'+top+'px;height:'+size+'px;font-size:'+f+'px"><i style="width:'+size+'px;height:'+size+'px;font-size:'+b+'px">H1</i>H1gher</div>';
+  }
+
+  function phoneHTML(variant, opts){
+    var s = '<div class="ph" style="position:relative">';
+    s += '<div class="a video">ゲーム映像（S4 発動イメージ）<small>y 656–1264 · 変更なし</small></div>';
+    s += '<div class="a result">03 RESULT</div>';
+    if (variant === 'A'){
+      s += '<div class="a ctaA"><div class="l1">TRY IT NEXT MATCH.</div><div class="l2">LIKE <span style="display:inline-block;width:52px;text-align:center">👍</span> TO REVISIT.</div></div>';
+      s += h1g(72,1420,48);
+    } else {
+      var t = state.text[opts.lang];
+      var ja = opts.lang === 'JA';
+      var f1 = ja ? 36 : 40, f2 = ja ? 52 : 60, slot = ja ? 68 : 78;
+      s += '<div class="a cta'+(opts.guides?' ctaBox':'')+'" style="left:120px;top:448px;width:840px;height:164px">';
+      s += '<div class="l1" style="font-size:'+f1+'px;line-height:46px">'+pre(t.l1)+'</div>';
+      s += '<div class="l2" style="font-size:'+f2+'px;line-height:70px">'+pre(t.l2a)+'<span class="slot" style="width:'+slot+'px">';
+      if (opts.guides){ var w = Math.round(f2*1.1)+4; s += '<span class="range" style="left:'+((slot-w)/2)+'px;top:'+(-6)+'px;width:'+w+'px;height:'+(f2+20)+'px"></span>'; }
+      s += '<span class="thumb" data-thumb>👍</span></span>'+pre(t.l2b)+'</div></div>';
+      s += h1g(72,1290,40);
+      if (opts.guides){
+        s += '<div class="a dim" style="left:990px;top:373px;height:75px"></div><div class="a dimt" style="left:930px;top:392px">75</div>';
+        s += '<div class="a dim" style="left:990px;top:612px;height:44px"></div><div class="a dimt" style="left:930px;top:614px">44</div>';
+        s += '<div class="a dim" style="left:12px;top:1330px;height:110px"></div><div class="a dimt" style="left:120px;top:1370px">110（H1gher〜下部UI）</div>';
+        s += '<div class="a" style="left:120px;top:404px;font-family:JetBrains Mono,monospace;font-size:22px;font-weight:700;color:#9CC5FF">CTA 840×164 · y448–612</div>';
+      }
+    }
+    if (opts.overlay) s += overlayHTML();
+    if (variant === 'A' && opts.overlay){
+      s += '<div class="a warn" style="left:40px;top:1404px;width:330px;height:140px"></div>';
+      s += '<div class="a warnt" style="left:390px;top:1418px">H1gherがチャンネルアイコンと重なる</div>';
+      s += '<div class="a dim" style="left:870px;top:1408px;height:32px"></div><div class="a dimt" style="left:780px;top:1400px;color:#FFB020">≈30</div>';
+    }
+    return s + '</div>';
+  }
+
+  function mount(el, variant, opts){
+    el.innerHTML = phoneHTML(variant, opts);
+    fit(el);
+  }
+  function fit(el){
+    var w = el.clientWidth, sc = w/1080;
+    el.style.height = (1920*sc)+'px';
+    var ph = el.firstChild; if (ph){ ph.style.position='absolute'; ph.style.transform='scale('+sc+')'; }
+  }
+
+  function offsetAt(t){
+    if (t < 0.15) return {dy:0,s:1};
+    if (t < 0.30){ var p=(t-0.15)/0.15, e=1-Math.pow(1-p,3); return {dy:-8*e,s:1+0.10*e}; }
+    if (t < 0.50){ var q=(t-0.30)/0.20, f=q<0.5?4*q*q*q:1-Math.pow(-2*q+2,3)/2; return {dy:-8*(1-f),s:1.10-0.10*f}; }
+    return {dy:0,s:1};
+  }
+
+  var mainEl = document.getElementById('mainPhone');
+  function renderMain(){ mount(mainEl,'B',{lang:state.lang,overlay:state.overlay,guides:state.guides}); applyFrame(); }
+  function applyFrame(){
+    var t = state.frame/60, o = state.motion ? offsetAt(t) : {dy:0,s:1};
+    var th = mainEl.querySelector('[data-thumb]');
+    if (th) th.style.transform = 'translateY('+o.dy.toFixed(2)+'px) scale('+o.s.toFixed(3)+')';
+    document.getElementById('seek').value = state.frame;
+    document.getElementById('readout').textContent = 't '+t.toFixed(2)+'s · 60fps f'+state.frame+' · 30fps f'+Math.round(t*30)+' · y '+o.dy.toFixed(1)+'px · ×'+o.s.toFixed(2);
+    var x = 80 + Math.min(t,2)*640;
+    var ln = document.getElementById('tlLine'), dt = document.getElementById('tlDot');
+    ln.setAttribute('x1',x); ln.setAttribute('x2',x); dt.setAttribute('cx',x); dt.setAttribute('cy',150+o.dy*11.25);
+  }
+
+  document.querySelectorAll('[data-lang]').forEach(function(b){
+    b.addEventListener('click',function(){
+      state.lang = b.getAttribute('data-lang');
+      document.querySelectorAll('[data-lang]').forEach(function(x){ x.setAttribute('aria-pressed', x===b ? 'true':'false'); });
+      renderMain();
+    });
+  });
+  document.getElementById('optOverlay').addEventListener('change',function(e){ state.overlay=e.target.checked; renderMain(); });
+  document.getElementById('optGuides').addEventListener('change',function(e){ state.guides=e.target.checked; renderMain(); });
+  document.getElementById('optMotion').addEventListener('change',function(e){ state.motion=e.target.checked; document.getElementById('pMotion').checked=e.target.checked; applyFrame(); });
+  document.getElementById('pMotion').addEventListener('change',function(e){ state.motion=e.target.checked; document.getElementById('optMotion').checked=e.target.checked; applyFrame(); });
+  document.getElementById('seek').addEventListener('input',function(e){ state.frame=Number(e.target.value); applyFrame(); });
+
+  var raf = null;
+  document.getElementById('playBtn').addEventListener('click',function(){
+    if (raf) cancelAnimationFrame(raf);
+    var start = performance.now();
+    (function step(now){
+      var f = Math.min(119, Math.round(((now-start)/1000)*60));
+      state.frame = f; applyFrame();
+      raf = f < 119 ? requestAnimationFrame(step) : null;
+    })(start);
+  });
+
+  // settings panel
+  var fL1=document.getElementById('fL1'), fL2a=document.getElementById('fL2a'), fL2b=document.getElementById('fL2b');
+  function fillPanel(){ var t=state.text[state.plang]; fL1.value=t.l1; fL2a.value=t.l2a; fL2b.value=t.l2b; }
+  function onEdit(key){ return function(e){ state.text[state.plang][key]=e.target.value; if (state.plang===state.lang) renderMain(); }; }
+  fL1.addEventListener('input',onEdit('l1')); fL2a.addEventListener('input',onEdit('l2a')); fL2b.addEventListener('input',onEdit('l2b'));
+  document.querySelectorAll('[data-plang]').forEach(function(b){
+    b.addEventListener('click',function(){
+      state.plang=b.getAttribute('data-plang');
+      document.querySelectorAll('[data-plang]').forEach(function(x){ x.setAttribute('aria-pressed', x===b?'true':'false'); });
+      fillPanel();
+      state.lang=state.plang;
+      document.querySelectorAll('[data-lang]').forEach(function(x){ x.setAttribute('aria-pressed', x.getAttribute('data-lang')===state.lang?'true':'false'); });
+      renderMain();
+    });
+  });
+
+  // bounce states (1.5x zoom: -8px -> -12px)
+  var st = [
+    {n:'通常', t:'t 0.15s', tf:'translateY(0) scale(1)', dy:'0 px', sc:'1.00', fr:'30fps f4–5 / 60fps f9', p:'0〜0.15秒は全文静止。読み始めを優先。'},
+    {n:'頂点', t:'t 0.30s', tf:'translateY(-12px) scale(1.1)', dy:'−8 px', sc:'1.10', fr:'30fps f9 / 60fps f18', p:'一度だけ上へ（ease-out）。可動範囲：上11px・左右3px（60px基準）。1行目の文字と約14px離れる。'},
+    {n:'着地後', t:'t 0.50s', tf:'translateY(0) scale(1)', dy:'0 px', sc:'1.00', fr:'30fps f15 / 60fps f30', p:'元位置へ戻り（ease-in-out）、区間終了まで静止。次シーンへ持ち越さない。'}
+  ];
+  document.getElementById('states').innerHTML = st.map(function(s){
+    return '<div class="state"><div class="state-h"><b>'+s.n+'</b><span>'+s.t+'</span></div>'+
+      '<div class="zoom"><div class="l1edge"></div><div class="lbl" style="right:10px;top:28px;color:#8A94A3">1行目 行ボックス下端</div>'+
+      '<div class="row"><span>IKE&nbsp;</span><span class="zslot"><span class="zr"></span><span class="zg"></span><span class="zt" style="transform:'+s.tf+'">👍</span></span><span>&nbsp;TO</span></div>'+
+      '<div class="base"></div><div class="lbl" style="left:10px;top:156px;color:#3FC1A8">ベースライン（固定）</div>'+
+      '<div class="lbl" style="left:10px;bottom:8px;color:#FFB866">破線＝可動範囲 / 点線＝静止位置</div></div>'+
+      '<dl class="state-b"><dt>縦移動</dt><dd>'+s.dy+'</dd><dt>倍率</dt><dd>'+s.sc+'</dd><dt>確認フレーム</dt><dd>'+s.fr+'</dd><p>'+s.p+'</p></dl></div>';
+  }).join('');
+
+  fillPanel();
+  renderMain();
+  mount(document.getElementById('phoneA'),'A',{overlay:true,guides:false});
+  mount(document.getElementById('phoneB'),'B',{lang:'EN',overlay:true,guides:false});
+  window.addEventListener('resize',function(){ document.querySelectorAll('.phone-scale').forEach(fit); });
+})();
+</script>
+</body>
+</html>
