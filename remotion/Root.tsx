@@ -2,6 +2,9 @@ import type { ReactNode } from 'react';
 import { Composition } from 'remotion';
 import { createDefaultProject, projectSchema } from '../shared/schema/project';
 import { LineupThumbnail } from './LineupThumbnail';
+import { LongVideo, type LongVideoProps } from './long/LongVideo';
+import { buildRenderPlan } from '../shared/long/render-plan';
+import { createLongProject } from '../shared/long/templates';
 import {
   LineupCard,
   LineupCardX45,
@@ -18,8 +21,31 @@ const defaultProps: LineupShortProps = {
   useOriginalMedia: false,
 };
 
+const defaultLongProps: LongVideoProps = {
+  plan: buildRenderPlan(createLongProject({ id: 'preview', title: 'preview', template: null, now: '2026-01-01T00:00:00.000Z' }), {
+    language: 'ja',
+  }),
+  mediaBaseUrl: 'studio-media://root',
+  useProxy: false,
+};
+
 export const RemotionRoot = (): ReactNode => (
   <>
+    <Composition
+      id="LongVideo"
+      component={LongVideo}
+      width={1920}
+      height={1080}
+      fps={60}
+      durationInFrames={1}
+      defaultProps={defaultLongProps}
+      calculateMetadata={({ props }) => ({
+        width: props.plan.width,
+        height: props.plan.height,
+        fps: props.plan.fps,
+        durationInFrames: Math.max(1, props.plan.durationInFrames),
+      })}
+    />
     <Composition
       id="LineupShortStandard"
       component={LineupShortStandard}

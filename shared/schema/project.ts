@@ -805,11 +805,24 @@ const retireGuideTemplate = (input: Record<string, unknown>): Record<string, unk
   };
 };
 
+export const CURRENT_SCHEMA_VERSION = 7;
+
+/** このアプリより新しい形式の Project。旧形式として読み替えて書き戻すと内容を失うため、読み込みを拒否する。 */
+export class NewerProjectError extends Error {
+  constructor(version: number) {
+    super(`このプロジェクトは新しい形式（schemaVersion ${version}）です。アプリを更新してから開いてください。ファイルは変更していません。`);
+  }
+}
+
 export const parseProject = (input: unknown): Project => {
   const version =
     typeof input === 'object' && input !== null && 'schemaVersion' in input
       ? (input as { schemaVersion?: unknown }).schemaVersion
       : undefined;
+  if (typeof version === 'number' && version > CURRENT_SCHEMA_VERSION) throw new NewerProjectError(version);
+  if (isRecord(input) && input.format === 'long') {
+    throw new Error('横動画のプロジェクトです。横動画作成モードで開いてください。');
+  }
   const source = isRecord(input) ? input : {};
   const prepared = normalizeThumbnail(
     hoistAnnotationStyle(
