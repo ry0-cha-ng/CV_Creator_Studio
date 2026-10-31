@@ -108,13 +108,17 @@ export const fitThumbnailHookFontSize = (text: string): number => {
   return Math.max(48, Math.floor((available / units) * 0.96));
 };
 
+/** サムネイルの見出し。著者の改行を最大3行まで残す。書き出しでも line-clamp に頼らない。 */
+export const thumbnailHookLines = (text: string): string[] =>
+  text.replaceAll('\r\n', '\n').split('\n').slice(0, THUMBNAIL.hookMaxLines);
+
 /** サムネイルの見出し。A案の位置に置き、3行でも映像窓の手前で止める。 */
-export const thumbnailHookLayout = (text: string): { top: number; maxLines: number; maxHeight: number } => {
-  const lines = Math.min(
-    THUMBNAIL.hookMaxLines,
-    Math.max(1, text.replaceAll('\r\n', '\n').split('\n').length),
-  );
-  const lineBox = THUMBNAIL.hookFontSize * THUMBNAIL.hookLineHeight;
+export const thumbnailHookLayout = (
+  text: string,
+  fontSize: number = THUMBNAIL.hookFontSize,
+): { top: number; maxLines: number; maxHeight: number } => {
+  const lines = Math.min(THUMBNAIL.hookMaxLines, Math.max(1, thumbnailHookLines(text).length));
+  const lineBox = fontSize * THUMBNAIL.hookLineHeight;
   const maxHeight = Math.ceil(lineBox * THUMBNAIL.hookMaxLines);
   const blockHeight = lines >= THUMBNAIL.hookMaxLines ? maxHeight : lineBox * lines;
   return {
@@ -145,13 +149,6 @@ export type HookFrameRequest =
   | { kind: 'image'; assetPath: string }
   | { kind: 'video'; assetPath: string; sourceTime: number };
 
-const GUIDE_BAND: Partial<Record<SceneKey, string>> = {
-  hook: 'G1 タイトル',
-  stand: 'G2 手順',
-  card: 'G3 カード',
-  demo: 'G4 デモ',
-};
-
 const clock = (seconds: number): string => {
   const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
   const minutes = Math.floor(safe / 60);
@@ -159,8 +156,7 @@ const clock = (seconds: number): string => {
   return `${String(minutes).padStart(2, '0')}:${rest.toFixed(2).padStart(5, '0')}`;
 };
 
-const sceneBand = (project: Project, sceneKey: SceneKey): string =>
-  (project.templateId === 't-guide' ? GUIDE_BAND[sceneKey] : undefined) ?? SCENE_BAND[sceneKey];
+const sceneBand = (sceneKey: SceneKey): string => SCENE_BAND[sceneKey];
 
 const hookStartRequest = (project: Project): HookFrameRequest | null => {
   const scene = project.scenes.find((item) => item.sceneKey === 'hook');
@@ -205,7 +201,7 @@ export const thumbnailSourceAt = (project: Project, seconds: number): ThumbnailS
   if (!Number.isFinite(seconds)) return null;
   const timeline = activeTimeline(project);
   const item = timeline.items.find((entry) => seconds >= entry.start && seconds < entry.start + entry.duration);
-  if (!item || item.sceneKey === 'card' || item.presentation === 'guide-card') return null;
+  if (!item || item.sceneKey === 'card') return null;
   const sceneKey = playbackSceneKey(project, item.sceneKey);
   const scene = project.scenes.find((entry) => entry.sceneKey === sceneKey);
   const clip = playbackClip(project, item.sceneKey);
@@ -237,16 +233,16 @@ const sceneForThumbnail = (project: Project): string | null => {
   if (!frame) return null;
   const timeline = activeTimeline(project);
   for (const item of timeline.items) {
-    if (item.sceneKey === 'card' || item.presentation === 'guide-card') continue;
+    if (item.sceneKey === 'card') continue;
     const clip = playbackClip(project, item.sceneKey);
     if (!clip || clip.assetId !== frame.assetId) continue;
     if (project.assets.find((entry) => entry.id === clip.assetId)?.type === 'image') {
-      return sceneBand(project, item.sceneKey);
+      return sceneBand(item.sceneKey);
     }
     const window = playedSourceWindow(clip, item);
     if (!window) continue;
     if (frame.sourceTime + 1e-3 >= window.in && frame.sourceTime <= window.out + 1e-3) {
-      return sceneBand(project, item.sceneKey);
+      return sceneBand(item.sceneKey);
     }
   }
   return null;

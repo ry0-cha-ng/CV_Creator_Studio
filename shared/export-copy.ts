@@ -148,7 +148,7 @@ export const copyForJob = (
   if (job.slot === 'x') {
     return {
       links,
-      text: prepareXPost(project, { basename }).text,
+      text: prepareXPost(project).text,
     };
   }
   const blocks: CopyBlock[] = [];
@@ -187,6 +187,7 @@ export const guessBasename = (project: Project, presetId: DeliveryPresetId, now 
   return provisionalBasename({
     plannedPostDate: project.plannedPostDate,
     map: project.lineup.map,
+    site: project.lineup.site,
     agent: project.lineup.agent,
     slot: DELIVERY_PRESETS[presetId].videoLanguage ?? 'x',
     now,

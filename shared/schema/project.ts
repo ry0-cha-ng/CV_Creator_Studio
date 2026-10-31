@@ -37,6 +37,7 @@ export const inheritItemSchema = z.enum([
   'cardAimZoom',
   'hookRotation',
   'experiment',
+  'thumbnail',
 ]);
 export type InheritItem = z.infer<typeof inheritItemSchema>;
 
@@ -135,9 +136,13 @@ export { sceneKeySchema } from './project-keys';
 export const sceneSchema = z.object({
   sceneKey: sceneKeySchema,
   clipId: z.string().optional(),
-  layout916: z.enum(['center-crop', 'blur-fit', 'split']).default('blur-fit'),
+  layout916: z.enum(['center-crop', 'blur-fit', 'focus', 'split']).default('blur-fit'),
   cropCenterX: z.number().min(0).max(1).default(0.5),
-  volume: z.number().min(0).max(1).default(0.15),
+  /** フォーカスの切り抜き縦位置。未指定は中央。 */
+  cropCenterY: z.number().min(0).max(1).optional(),
+  /** フォーカスの切り抜き拡大率。未指定は 1（高さいっぱい）。 */
+  cropZoom: z.number().min(1).max(1.5).optional(),
+  volume: z.number().min(0).max(1).default(0.1),
   bgmVolume: z.number().min(0).max(1).optional(),
   zoom: z
     .object({
@@ -280,6 +285,8 @@ export const publishingSchema = z
     links: z.partialRecord(deliveryPresetIdSchema, z.string()).default({}),
     /** この動画に紐づける ClutchVault の定点メモ。空ならトップページの計測URL。 */
     memoUrl: z.string().default(''),
+    /** YouTubeの固定コメント。投稿APIには送らず、コピーして自分で固定する。 */
+    pinnedComment: z.string().default(''),
     xPost: xPostSchema.default(emptyXPost),
   })
   .default(() => ({
@@ -288,6 +295,7 @@ export const publishingSchema = z
     hashtags: { ja: '', en: '' },
     links: {},
     memoUrl: '',
+    pinnedComment: '',
     xPost: emptyXPost(),
   }));
 
@@ -311,9 +319,12 @@ export const postLogSchema = z.object({
   platform: platformSchema,
   lang: languageSchema,
   url: z.string().default(''),
-  postedAt: z.string(),
+  postedAt: z.string().default(''),
   preset: deliveryPresetIdSchema,
   metrics: postMetricsSchema.optional(),
+  publicationState: z.enum(['private', 'unlisted', 'scheduled', 'public']).optional(),
+  scheduledPublishAt: z.string().optional(),
+  timezone: z.string().optional(),
 });
 
 const editedSideSchema = z
@@ -321,6 +332,18 @@ const editedSideSchema = z
     ja: z.boolean().optional(),
     en: z.boolean().optional(),
     ko: z.boolean().optional(),
+  })
+  .optional();
+
+const translationCellSchema = z.object({
+  source: z.string(),
+  text: z.string(),
+});
+
+const translationSideSchema = z
+  .object({
+    ja: translationCellSchema.optional(),
+    ko: translationCellSchema.optional(),
   })
   .optional();
 
@@ -335,12 +358,23 @@ export const guideSchema = z.object({
       hashtags: editedSideSchema,
     })
     .default({}),
+  /** 直近の翻訳と、そのときの英語原稿。手修正と再翻訳の判定に使う。 */
+  publishingTranslation: z
+    .object({
+      title: translationSideSchema,
+      description: translationSideSchema,
+    })
+    .default({}),
   previousHookPattern: hookPatternSchema.optional(),
   exportPresets: z.array(deliveryPresetIdSchema).default(() => [...DEFAULT_EXPORT_PRESETS]),
   xReplyVideo: z.enum(['youtube', 'tiktok']).default('youtube'),
   exportWithoutBgm: z.boolean().default(false),
   /** その言語の動画プリセットがオフのとき、サムネイル JPG だけ書き出す。 */
   thumbnailOnly: z.array(z.enum(['ja', 'en'])).default([]),
+  /** テロップ手順の案出しに渡す、動画の特徴。 */
+  wordingBrief: z.string().default(''),
+  /** テロップ手順の案出しに渡す、ほしい雰囲気。 */
+  wordingTone: z.string().default(''),
   lastExport: z
     .object({
       at: z.string(),
@@ -421,7 +455,7 @@ export const projectSchema = z.object({
   stills: z.array(stillSchema).default([]),
   scenes: z.array(sceneSchema),
   captions: z.array(captionSchema),
-  templateId: z.enum(['t-std', 't-guide']).default('t-std'),
+  templateId: z.literal('t-std').default('t-std'),
   structureTemplateId: z.string().optional(),
   timelineEdited: z.boolean().default(false),
   timeline: timelineSchema.nullable().default(null),
@@ -465,11 +499,33 @@ export const projectSchema = z.object({
     stand: z.string().optional(),
     result: z.string().optional(),
   }),
-  /** 未設定のときはフックの先頭をサムネイル映像にする。 */
+  /** 未設定のときはフックの先頭をサムネイル映像にする。classic 用。 */
   thumbnailFrame: z
     .object({
       assetId: z.string(),
       sourceTime: z.number().min(0),
+    })
+    .optional(),
+  /**
+   * サムネイルの配置。未設定の既存プロジェクトは classic。
+   * 新規は focus。frame が無い focus は 03 発動イメージに追従する。
+   */
+  thumbnail: z
+    .object({
+      layout: z.enum(['classic', 'focus']),
+      frame: z
+        .object({
+          assetId: z.string().min(1),
+          timeSec: z.number().min(0),
+        })
+        .optional(),
+      focus: z
+        .object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+        })
+        .optional(),
+      zoom: z.number().min(1).max(1.5).optional(),
     })
     .optional(),
   audio: z
@@ -702,18 +758,69 @@ const hoistAnnotationStyle = (input: Record<string, unknown>): Record<string, un
   return { ...input, annotationStyle: zoom.weight };
 };
 
+const clampUnit = (value: unknown, min: number, max: number): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.min(max, Math.max(min, value));
+};
+
+/** 壊れた thumbnail は落とさず、layout 不明は classic、数値は範囲へ収める。無いときは足さない。 */
+const normalizeThumbnail = (input: Record<string, unknown>): Record<string, unknown> => {
+  if (!('thumbnail' in input) || input.thumbnail == null) return input;
+  const raw = input.thumbnail;
+  if (!isRecord(raw)) {
+    const { thumbnail: _thumbnail, ...rest } = input;
+    return rest;
+  }
+  const layout = raw.layout === 'focus' ? 'focus' : 'classic';
+  const frameRaw = isRecord(raw.frame) ? raw.frame : undefined;
+  const timeSec = clampUnit(frameRaw?.timeSec, 0, Number.POSITIVE_INFINITY);
+  const frame =
+    frameRaw && typeof frameRaw.assetId === 'string' && frameRaw.assetId.trim() && timeSec !== undefined
+      ? { assetId: frameRaw.assetId, timeSec }
+      : undefined;
+  const focusRaw = isRecord(raw.focus) ? raw.focus : undefined;
+  const focusX = clampUnit(focusRaw?.x, 0, 1);
+  const focusY = clampUnit(focusRaw?.y, 0, 1);
+  const focus = focusX !== undefined && focusY !== undefined ? { x: focusX, y: focusY } : undefined;
+  const zoom = clampUnit(raw.zoom, 1, 1.5);
+  return {
+    ...input,
+    thumbnail: {
+      layout,
+      ...(frame ? { frame } : {}),
+      ...(focus ? { focus } : {}),
+      ...(zoom !== undefined ? { zoom } : {}),
+    },
+  };
+};
+
+/** 廃止した T-GUIDE は T-STD として開き、ガイド専用タイムラインは組み直す。 */
+const retireGuideTemplate = (input: Record<string, unknown>): Record<string, unknown> => {
+  if (input.templateId !== 't-guide') return input;
+  return {
+    ...input,
+    templateId: 't-std',
+    timelineEdited: false,
+    timeline: null,
+  };
+};
+
 export const parseProject = (input: unknown): Project => {
   const version =
     typeof input === 'object' && input !== null && 'schemaVersion' in input
       ? (input as { schemaVersion?: unknown }).schemaVersion
       : undefined;
   const source = isRecord(input) ? input : {};
-  const prepared = hoistAnnotationStyle(
-    version === 7
-      ? source
-      : upgradeProjectV4(
-          version === 4 ? source : version === 3 ? upgradeProjectV3(source) : upgradeLegacyProject(source),
-        ),
+  const prepared = normalizeThumbnail(
+    hoistAnnotationStyle(
+      retireGuideTemplate(
+        version === 7
+          ? source
+          : upgradeProjectV4(
+              version === 4 ? source : version === 3 ? upgradeProjectV3(source) : upgradeLegacyProject(source),
+            ),
+      ),
+    ),
   );
   const parsed = projectSchema.parse(prepared);
   return refreshLegacyCta(restoreCaptionSurfaces(restoreAimMarkerSizes(parsed, input), input), CTA_TEXT);
@@ -724,10 +831,13 @@ export const emptyGuide = (): Project['guide'] => ({
   lastStep: 1,
   confirmedSteps: [],
   publishingEdited: {},
+  publishingTranslation: {},
   exportPresets: [...DEFAULT_EXPORT_PRESETS],
   xReplyVideo: 'youtube',
   exportWithoutBgm: false,
   thumbnailOnly: [],
+  wordingBrief: '',
+  wordingTone: '',
 });
 
 export const createDefaultProject = (
@@ -753,33 +863,33 @@ export const createDefaultProject = (
         : { ja: '通常投げ', en: 'NORMAL THROW' },
     ...(agent.id === 'Sova' ? { charge: 1, bounce: 0 } : {}),
     crouch: false,
-    standDescription: { ja: '角に立つ', en: 'STAND IN THE CORNER' },
+    standDescription: { ja: 'ここに立つ', en: 'STAND HERE' },
     aimDescription: { ja: '印に合わせる', en: 'AIM AT THE MARK' },
   },
   assets: [],
   clips: [],
   stills: [],
   scenes: [
-    { sceneKey: 'hook', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.15 },
+    { sceneKey: 'hook', layout916: 'focus', cropCenterX: 0.5, volume: 0.1 },
     {
       sceneKey: 'stand',
       layout916: 'center-crop',
       cropCenterX: 0.5,
-      volume: 0.15,
+      volume: 0.1,
       zoom: { enabled: true, from: 1, to: 1.15, x: 0.5, y: 0.5 },
     },
     {
       sceneKey: 'aim',
       layout916: 'center-crop',
       cropCenterX: 0.5,
-      volume: 0.15,
+      volume: 0.1,
       freeze: { enabled: true, at: 2, duration: 1 },
       aimMarker: { enabled: true, x: 0.5, y: 0.5, size: 1, at: 0 },
     },
-    { sceneKey: 'throw', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.15 },
-    { sceneKey: 'card', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.15 },
-    { sceneKey: 'demo', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.15 },
-    { sceneKey: 'loop', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.15 },
+    { sceneKey: 'throw', layout916: 'focus', cropCenterX: 0.5, volume: 0.1 },
+    { sceneKey: 'card', layout916: 'blur-fit', cropCenterX: 0.5, volume: 0.1 },
+    { sceneKey: 'demo', layout916: 'focus', cropCenterX: 0.5, volume: 0.1 },
+    { sceneKey: 'loop', layout916: 'focus', cropCenterX: 0.5, volume: 0.1 },
   ],
   captions: [
     {
@@ -834,6 +944,7 @@ export const createDefaultProject = (
   annotationStyle: 'standard',
   cardAimZoom: defaultCardAimZoom(),
   cardStills: {},
+  thumbnail: { layout: 'focus' },
   audio: { bgm: null },
   publishing: {
     title: { ja: '', en: '' },
@@ -841,6 +952,7 @@ export const createDefaultProject = (
     hashtags: { ja: '', en: '' },
     links: {},
     memoUrl: '',
+    pinnedComment: '',
     xPost: emptyXPost(),
   },
   posts: [],

@@ -18,6 +18,7 @@ import {
   precheckAuto,
   projectStatusForWorkflow,
   publishFiles,
+  publishingPresets,
   publishingSettingsSchema,
   publishingWorkflowSchema,
   qaReady,
@@ -27,6 +28,7 @@ import {
   skipTask,
   taskBlurb,
   taskTitle,
+  upsertPublicationVerify,
   withRecordedPost,
   workflowTaskSchema,
   type PublishingBundle,
@@ -128,7 +130,13 @@ export class PublishingService {
   async start(projectId: string): Promise<PublishingView> {
     const project = await this.loadProject(projectId);
     const bundle = this.syncBundle(project);
-    if (!bundle) throw new Error('書き出しが終わってから投稿運用を始められます');
+    if (!bundle) {
+      throw new Error(
+        project.guide.lastExport
+          ? '投稿先のプリセットがありません。手順9でプリセットを選んで書き出してください'
+          : '書き出しが終わってから投稿運用を始められます',
+      );
+    }
     const now = new Date().toISOString();
     const next: PublishingBundle = {
       ...bundle,
@@ -237,12 +245,17 @@ export class PublishingService {
         .filter((item) => isPublishTask(item.type) && item.status !== 'skipped')
         .map((item) => asPreset(item.preset))
         .filter((preset): preset is DeliveryPresetId => Boolean(preset));
-      if (!qaReady(working.tasks.find((item) => item.id === taskId) ?? task, presets)) {
+      if (!qaReady(working.tasks.find((item) => item.id === taskId) ?? task, presets, working.workflow.skipQaPresets)) {
         throw new Error('媒体ごとの確認が終わっていません');
       }
       working = completeTask(working, taskId, now);
     } else {
-      const checks = recordAuto(nextProject, working.tasks, (preset) => this.hasReview(project.id, preset));
+      const checks = recordAuto(
+        nextProject,
+        working.tasks,
+        (preset) => this.hasReview(project.id, preset),
+        working.workflow.skipQaPresets,
+      );
       if (checks.some((check) => check.key !== 'review' && !check.ok)) throw new Error('記録がそろっていません');
       working = completeTask(working, taskId, now);
     }
@@ -255,6 +268,70 @@ export class PublishingService {
     };
     this.save(working);
     return { project: nextProject, view: await this.toView(nextProject, working) };
+  }
+
+  async applyYoutubePublication(
+    project: Project,
+    taskId: string,
+    input: {
+      url: string;
+      postedAt?: string;
+      publicationState: NonNullable<Project['posts'][number]['publicationState']>;
+      scheduledPublishAt?: string;
+      timezone?: string;
+      keepWithoutPublic?: boolean;
+    },
+  ): Promise<{ project: Project; view: PublishingView }> {
+    const bundle = this.syncBundle(project);
+    if (!bundle) throw new Error('投稿運用はまだありません');
+    const task = bundle.tasks.find((item) => item.id === taskId);
+    const preset = asPreset(task?.preset);
+    if (!task || !preset) throw new Error('YouTube投稿タスクが見つかりません');
+    const now = new Date().toISOString();
+    let working = completeTask(bundle, taskId, now, {
+      url: input.url,
+      postedAt: input.postedAt,
+    });
+    working = upsertPublicationVerify(
+      working,
+      working.tasks.find((item) => item.id === taskId) ?? task,
+      input.publicationState === 'scheduled' ? input.scheduledPublishAt : undefined,
+      now,
+      () => randomUUID(),
+    );
+    const skipQa = new Set(working.workflow.skipQaPresets);
+    if (input.keepWithoutPublic) skipQa.add(preset);
+    else skipQa.delete(preset);
+    working = {
+      ...working,
+      workflow: { ...working.workflow, skipQaPresets: [...skipQa], updatedAt: now },
+    };
+    const nextProject = withRecordedPost(project, preset, input.url, input.postedAt ?? '', randomUUID(), {
+      publicationState: input.publicationState,
+      scheduledPublishAt: input.scheduledPublishAt,
+      timezone: input.timezone,
+    });
+    this.save(working);
+    return {
+      project: { ...nextProject, status: projectStatusForWorkflow(nextProject, working, bundle.workflow.status) },
+      view: await this.toView(nextProject, working),
+    };
+  }
+
+  async completePublicationVerify(project: Project, preset: string): Promise<{ project: Project; view: PublishingView }> {
+    const bundle = this.syncBundle(project);
+    if (!bundle) throw new Error('投稿運用はまだありません');
+    const task = bundle.tasks.find((item) => item.type === 'youtube-publication-verify' && item.preset === preset);
+    if (!task || task.status === 'done' || task.status === 'skipped') {
+      return { project, view: await this.toView(project, bundle) };
+    }
+    const now = new Date().toISOString();
+    const working = completeTask(bundle, task.id, now);
+    this.save(working);
+    return {
+      project: { ...project, status: projectStatusForWorkflow(project, working, bundle.workflow.status) },
+      view: await this.toView(project, working),
+    };
   }
 
   async skip(project: Project, taskId: string, reason?: string): Promise<{ project: Project; view: PublishingView }> {
@@ -474,7 +551,7 @@ export class PublishingService {
     const found = media.filter((file) => present.get(file.relativePath));
     const license = licenseSummary(
       project.audio.bgm ? this.getTrack(project.audio.bgm.audioTrackId) : null,
-      platformsFor(project.guide.exportPresets),
+      platformsFor(publishingPresets(project)),
     );
     const autoChecks = precheckAuto(project, {
       exportFresh: project.guide.lastExport?.contentStamp === exportContentStamp(project),

@@ -76,6 +76,7 @@ export class YoutubeService {
       settings: await this.settings(),
       running: this.sync.running(),
       counts: { videos: 0, linked: 0, unlinked: 0, withDaily: 0 },
+      capabilities: { read: auth.canRead, publish: auth.canPublish, analytics: auth.canAnalytics },
     };
     if (!this.deps.hasWorkspace()) return base;
     const channel = this.store.channel();
@@ -99,8 +100,15 @@ export class YoutubeService {
     return this.status();
   }
 
-  async connect(): Promise<YoutubeStatus> {
-    await this.auth.connect();
+  async connect(mode: 'read' | 'publish' = 'read'): Promise<YoutubeStatus> {
+    await this.auth.connect(mode);
+    await this.confirmChannel();
+    return this.status();
+  }
+
+  async disconnectLocal(): Promise<YoutubeStatus> {
+    this.sync.cancel();
+    await this.auth.disconnectLocal();
     return this.status();
   }
 
@@ -108,6 +116,25 @@ export class YoutubeService {
     this.sync.cancel();
     await this.auth.disconnect();
     return this.status();
+  }
+
+  /** 接続直後に本人のチャンネルを確定する。トークンは返さない。 */
+  async confirmChannel(): Promise<void> {
+    if (!this.deps.hasWorkspace()) return;
+    const auth = await this.auth.state();
+    if (!auth.connected || !auth.canRead) return;
+    const api = new YoutubeApi({ token: (force) => this.auth.accessToken(force), fetch: this.deps.fetch });
+    const channel = await api.myChannel();
+    const now = new Date().toISOString();
+    const previous = this.store.channel();
+    this.store.saveChannel({
+      channelId: channel.channelId,
+      title: channel.title,
+      handle: channel.handle,
+      uploadsPlaylistId: channel.uploadsPlaylistId,
+      connectedAt: previous?.connectedAt ?? now,
+      lastSeenAt: now,
+    });
   }
 
   cancelLogin(): void {
@@ -123,6 +150,11 @@ export class YoutubeService {
 
   cancelSync(): void {
     this.sync.cancel();
+  }
+
+  /** 自チャンネルの読み取り同期が走っているか。競合同期はこれを優先して譲る。 */
+  reading(): boolean {
+    return this.sync.running();
   }
 
   /** 起動時の補完。接続済みで設定がONのときだけ。失敗しても起動は止めない。 */

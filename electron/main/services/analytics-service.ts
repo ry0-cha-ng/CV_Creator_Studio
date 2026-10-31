@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { guessBasename } from '../../../shared/export-copy';
 import { likeCtaActive, resolveLikeCtaText } from '../../../shared/s4-cta';
+import { thumbnailLayoutOf } from '../../../shared/thumbnail-focus';
 import {
   analyticsCsv,
   applyAdoptedInsights,
@@ -34,10 +35,24 @@ import {
   type MetricSnapshot,
 } from '../../../shared/schema/analytics';
 import type { Project } from '../../../shared/schema/project';
+import { emptyEstimate, nearestExport, snapshotFromProject, type PublishedExportRecord } from '../../../shared/published-snapshot';
+import type { PublishedSnapshot } from '../../../shared/schema/published';
+import { manualMetricSchema, type ManualMetric } from '../../../shared/schema/manual-metric';
+import { youtubeExportCsv, youtubeExportDocument, youtubeExportJson } from '../../../shared/youtube-export';
 import { youtubeVideoSchema, type YoutubeVideo } from '../../../shared/schema/youtube';
+import {
+  cardSpan,
+  describeWindow,
+  durationMismatch,
+  reportForWindow,
+  type YoutubeAnalysisRow,
+  type YoutubePostView,
+} from '../../../shared/youtube-compare';
 import { youtubeVideoIdFromUrl } from '../../../shared/post-url';
 import { activeTimeline } from '../../../shared/timeline';
+import { PublishedStore } from './published-store';
 import { runStudioMigrations } from './studio-db-migrations';
+import { YoutubeStore } from './youtube-store';
 
 type Row = { id: string; data: string };
 
@@ -167,7 +182,14 @@ export class AnalyticsService {
       const videoId = log.platform === 'youtube' ? youtubeVideoIdFromUrl(log.url) : undefined;
       const imported = videoId ? this.importedPostFor(videoId) : undefined;
       const id = previous?.id ?? imported?.id ?? randomUUID();
-      const base = this.postFromProject(project, log, id, previous?.createdAt ?? imported?.createdAt ?? now, now);
+      const base = this.postFromProject(
+        project,
+        log,
+        id,
+        previous?.createdAt ?? imported?.createdAt ?? now,
+        now,
+        previous,
+      );
       const claimedElsewhere = videoId ? this.videoClaimedBy(videoId, [id, imported?.id]) : undefined;
       const post: AnalyticsPost = analyticsPostSchema.parse({
         ...base,
@@ -195,7 +217,9 @@ export class AnalyticsService {
           videoId && !claimedElsewhere ? videoId : null,
           JSON.stringify(post),
         );
-      if (log.url.trim() && log.postedAt) this.ensureReviewTask(post, now);
+      if (this.shouldReview(post) && log.url.trim() && (post.actualPublishedAt || log.postedAt)) {
+        this.ensureReviewTask(post, now);
+      }
       if (log.metrics) this.mirrorMetrics(post.id, log.metrics, log.metrics.capturedAt || now);
       if (post.experimentId) this.noteSecondaryChanges(post);
     }
@@ -441,12 +465,221 @@ export class AnalyticsService {
     return analyticsCsv(this.bundle());
   }
 
+  /** 書き出し完了時の構成を固定する。同じ exportId が既にあれば変えない。 */
+  freezePublishedExport(record: PublishedExportRecord): PublishedSnapshot {
+    this.ensure();
+    const snapshot = snapshotFromProject({
+      exportId: record.exportId,
+      project: record.project,
+      source: 'export',
+      frozenAt: record.frozenAt,
+      lang: record.language,
+      basename: record.basename,
+      renderedDurationSec: record.renderedDurationSec,
+    });
+    return this.publishedStore().saveIfAbsent(snapshot);
+  }
+
+  /**
+   * 投稿に版が無ければ、近い書き出し版を付ける。無ければ現在のプロジェクトから推定し、以後は更新しない。
+   */
+  ensurePublishedSnapshots(projects: Project[]): void {
+    if (!this.database) return;
+    const projectsById = new Map(projects.map((project) => [project.id, project]));
+    const store = this.publishedStore();
+    const now = new Date().toISOString();
+    for (const post of this.posts()) {
+      if (post.platform !== 'youtube' || store.forPost(post.id)) continue;
+      const project = post.projectId ? projectsById.get(post.projectId) : undefined;
+      const candidate = project ? nearestExport(store.unboundByProject(project.id), post) : undefined;
+      if (candidate) {
+        const bound = store.bind(candidate.exportId, post.id);
+        if (bound) this.attachExportRef(post, bound);
+        continue;
+      }
+      const snapshot = project
+        ? snapshotFromProject({
+            exportId: `estimate:${post.id}`,
+            project,
+            postId: post.id,
+            source: 'estimate',
+            frozenAt: now,
+            lang: post.lang,
+            basename: post.basename,
+          })
+        : emptyEstimate({
+            postId: post.id,
+            projectId: post.projectId,
+            frozenAt: now,
+            durationSec: post.durationSec ?? post.content.durationSec,
+            templateId: post.templateId,
+            hookPattern: post.hookPattern,
+          });
+      this.attachExportRef(post, store.saveIfAbsent(snapshot));
+    }
+  }
+
+  analysisIndex(): YoutubeAnalysisRow[] {
+    this.ensure();
+    const youtube = new YoutubeStore(() => this.db());
+    const published = this.publishedStore();
+    const horizon = youtube.state('horizon').lastDataDate;
+    const reports = youtube.basicReports();
+    return this.posts()
+      .filter((post) => post.platform === 'youtube')
+      .map((post) => {
+        const videoId = post.youtubeVideoId;
+        const video = videoId ? youtube.video(videoId) : undefined;
+        const publishedAt = video?.publishedAt ?? post.apiPublishedAt ?? post.postedAt;
+        const mine = videoId ? reports.filter((report) => report.videoId === videoId) : [];
+        const snapshot = published.forPost(post.id);
+        return {
+          postId: post.id,
+          videoId,
+          contentType: video?.contentType ?? post.contentType,
+          cardStartSec: cardSpan(snapshot)?.startSec,
+          snapshotSource: snapshot?.source,
+          windows: {
+            'publish-calendar-7d': describeWindow(publishedAt, horizon, mine, 'publish-calendar-7d'),
+            'publish-calendar-28d': describeWindow(publishedAt, horizon, mine, 'publish-calendar-28d'),
+          },
+        };
+      });
+  }
+
+  postView(postId: string): YoutubePostView {
+    this.ensure();
+    const post = this.posts().find((item) => item.id === postId);
+    if (!post) throw new Error('投稿が見つかりません');
+    const youtube = new YoutubeStore(() => this.db());
+    const video = post.youtubeVideoId ? youtube.video(post.youtubeVideoId) : undefined;
+    const reports = post.youtubeVideoId ? youtube.reports(post.youtubeVideoId) : [];
+    const horizon = youtube.state('horizon').lastDataDate;
+    const publishedAt = video?.publishedAt ?? post.apiPublishedAt ?? post.postedAt;
+    const snapshot = this.publishedStore().forPost(post.id);
+    const windowOf = (kind: 'publish-calendar-7d' | 'publish-calendar-28d') =>
+      describeWindow(publishedAt, horizon, reports, kind);
+    return {
+      postId: post.id,
+      horizon,
+      publishedAt,
+      publishedDurationSec: video?.durationSec ?? post.durationSec,
+      snapshot,
+      durationDiffers: snapshot ? durationMismatch(snapshot.durationSec, video?.durationSec) : false,
+      daily: post.youtubeVideoId ? youtube.daily(post.youtubeVideoId) : [],
+      windows: {
+        'publish-calendar-7d': windowOf('publish-calendar-7d'),
+        'publish-calendar-28d': windowOf('publish-calendar-28d'),
+      },
+      retention: {
+        'publish-calendar-7d': reportForWindow(publishedAt, reports, 'retention', 'publish-calendar-7d'),
+        'publish-calendar-28d': reportForWindow(publishedAt, reports, 'retention', 'publish-calendar-28d'),
+      },
+      traffic: {
+        'publish-calendar-7d': reportForWindow(publishedAt, reports, 'traffic-source', 'publish-calendar-7d'),
+        'publish-calendar-28d': reportForWindow(publishedAt, reports, 'traffic-source', 'publish-calendar-28d'),
+      },
+      changes: post.youtubeVideoId ? youtube.metadataChanges(post.youtubeVideoId) : [],
+      manuals: this.manuals(post.id),
+    };
+  }
+
+  /** 手入力は別テーブルへ追加する。APIの日別・期間集計は更新しない。 */
+  saveManualMetric(input: unknown): YoutubePostView {
+    this.ensure();
+    const metric = manualMetricSchema.parse({
+      ...(typeof input === 'object' && input ? input : {}),
+      id: randomUUID(),
+      enteredAt: new Date().toISOString(),
+      note: (input as { note?: string })?.note ?? '',
+    });
+    if (!this.posts().some((post) => post.id === metric.postId)) throw new Error('投稿が見つかりません');
+    this.database!.prepare(
+      'INSERT INTO youtube_manual_metrics (id, post_id, entered_at, data) VALUES (?, ?, ?, ?)',
+    ).run(metric.id, metric.postId, metric.enteredAt, JSON.stringify(metric));
+    return this.postView(metric.postId);
+  }
+
+  /** 比較で選んだ投稿を、既存の実験の対象へ足す。投稿の役割（Control/Variant）は変えない。 */
+  linkPostsToExperiment(experimentId: string, postIds: string[], windowKind: 'publish-calendar-7d' | 'publish-calendar-28d'): AnalyticsBundle {
+    this.ensure();
+    const experiment = this.experiments().find((item) => item.id === experimentId);
+    if (!experiment) throw new Error('実験が見つかりません');
+    const known = new Set(this.posts().map((post) => post.id));
+    const linkedPostIds = [...new Set([...experiment.linkedPostIds, ...postIds.filter((id) => known.has(id))])];
+    this.writeExperiment({
+      ...experiment,
+      linkedPostIds,
+      comparisonWindow: experiment.comparisonWindow ?? windowKind,
+      updatedAt: new Date().toISOString(),
+    });
+    return this.bundle();
+  }
+
+  youtubeExport(kind: 'csv' | 'json'): string {
+    this.ensure();
+    const rows = this.analysisIndex();
+    const posts = this.posts()
+      .filter((post) => post.platform === 'youtube')
+      .map((post) => ({
+        id: post.id,
+        title: post.content.title || post.basename || post.id,
+        videoId: post.youtubeVideoId,
+        contentType: post.contentType,
+      }));
+    const document = youtubeExportDocument({
+      exportedAt: new Date().toISOString(),
+      horizon: new YoutubeStore(() => this.db()).state('horizon').lastDataDate,
+      posts,
+      rows,
+      manuals: this.manuals(),
+    });
+    return kind === 'csv' ? youtubeExportCsv(document) : youtubeExportJson(document);
+  }
+
+  private manuals(postId?: string): ManualMetric[] {
+    const rows = (
+      postId
+        ? this.database!.prepare('SELECT data FROM youtube_manual_metrics WHERE post_id = ? ORDER BY entered_at').all(postId)
+        : this.database!.prepare('SELECT data FROM youtube_manual_metrics ORDER BY entered_at').all()
+    ) as Array<{ data: string }>;
+    return rows.flatMap((row) => {
+      try {
+        const parsed = manualMetricSchema.safeParse(JSON.parse(row.data));
+        return parsed.success ? [parsed.data] : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  private publishedStore(): PublishedStore {
+    return new PublishedStore(() => this.db());
+  }
+
+  private attachExportRef(post: AnalyticsPost, snapshot: PublishedSnapshot): void {
+    if (post.exportRef?.exportId === snapshot.exportId) return;
+    if (post.exportRef) return;
+    const next = analyticsPostSchema.parse({
+      ...post,
+      exportRef: {
+        exportId: snapshot.exportId,
+        basename: snapshot.basename,
+        frozenAt: snapshot.frozenAt,
+      },
+      durationSec: snapshot.durationSec || post.durationSec,
+      updatedAt: new Date().toISOString(),
+    });
+    this.database!.prepare('UPDATE analytics_posts SET data = ? WHERE id = ?').run(JSON.stringify(next), post.id);
+  }
+
   private postFromProject(
     project: Project,
     log: Project['posts'][number],
     id: string,
     createdAt: string,
     updatedAt: string,
+    previous?: AnalyticsPost,
   ): AnalyticsPost {
     const duration = activeTimeline(project).durationSec;
     const stillId = project.cardStills.result ?? project.cardStills.aim ?? project.cardStills.stand;
@@ -463,6 +696,30 @@ export class AnalyticsService {
     const ctaCopy = like
       ? `${likeText.line1[log.lang] ?? likeText.line1.en} / ${likeText.before[log.lang] ?? likeText.before.en}👍${likeText.after[log.lang] ?? likeText.after.en}`
       : undefined;
+    const frozen = previous?.exportRef;
+    const liveContent = {
+      title: project.title,
+      map: project.lineup.map,
+      site: project.lineup.site,
+      side: project.lineup.side === 'attack' ? '攻め' : '守り',
+      agent: project.lineup.agent,
+      ability: project.lineup.ability,
+      lineupCategory: project.analytics.lineupCategory,
+      series: project.analytics.series || project.experiment.series,
+      templateId: project.templateId,
+      hookPattern: project.hookPattern,
+      openingType: opening,
+      structureType: structure,
+      ctaType: cta,
+      thumbnailLayout: thumbnailLayoutOf(project),
+      ctaCopy,
+      ctaMotion: like ? likeText.motion !== false : undefined,
+      durationSec: duration,
+      durationLabel: project.analytics.durationLabel,
+      withBgm: Boolean(project.audio.bgm),
+      bgmTrackId: project.audio.bgm?.audioTrackId,
+      thumbnailPath: thumbnail,
+    };
     return analyticsPostSchema.parse({
       id,
       projectId: project.id,
@@ -470,7 +727,17 @@ export class AnalyticsService {
       platform: log.platform,
       lang: log.lang,
       url: log.url,
-      postedAt: log.postedAt,
+      postedAt: log.postedAt || previous?.postedAt || updatedAt,
+      publicationState: log.publicationState ?? previous?.publicationState,
+      scheduledPublishAt: log.scheduledPublishAt ?? previous?.scheduledPublishAt,
+      timezone: log.timezone ?? previous?.timezone,
+      uploadedAt: previous?.uploadedAt,
+      firstObservedPublicAt: previous?.firstObservedPublicAt,
+      actualPublishedAt: previous?.actualPublishedAt,
+      publishedAtSource: previous?.publishedAtSource,
+      publicationConfirmedAt: previous?.publicationConfirmedAt,
+      everPublished: previous?.everPublished,
+      exportRef: frozen,
       basename,
       utmContent: basename,
       templateId: project.templateId,
@@ -478,36 +745,24 @@ export class AnalyticsService {
       openingType: opening,
       structureType: structure,
       ctaType: cta,
+      thumbnailLayout: thumbnailLayoutOf(project),
       experimentId: project.experimentRef?.experimentId,
       experimentArm: project.experimentRef?.arm,
       durationSec: duration,
       withBgm: Boolean(project.audio.bgm),
       bgmTrackId: project.audio.bgm?.audioTrackId,
-      content: {
-        title: project.title,
-        map: project.lineup.map,
-        site: project.lineup.site,
-        side: project.lineup.side === 'attack' ? '攻め' : '守り',
-        agent: project.lineup.agent,
-        ability: project.lineup.ability,
-        lineupCategory: project.analytics.lineupCategory,
-        series: project.analytics.series || project.experiment.series,
-        templateId: project.templateId,
-        hookPattern: project.hookPattern,
-        openingType: opening,
-        structureType: structure,
-        ctaType: cta,
-        ctaCopy,
-        ctaMotion: like ? likeText.motion !== false : undefined,
-        durationSec: duration,
-        durationLabel: project.analytics.durationLabel,
-        withBgm: Boolean(project.audio.bgm),
-        bgmTrackId: project.audio.bgm?.audioTrackId,
-        thumbnailPath: thumbnail,
-      },
+      content: frozen && previous?.content ? previous.content : liveContent,
       createdAt,
       updatedAt,
     });
+  }
+
+  private shouldReview(post: AnalyticsPost): boolean {
+    if (post.publicationState === 'scheduled' || post.publicationState === 'private' || post.publicationState === 'unlisted') {
+      return false;
+    }
+    if (post.publicationState === 'public') return Boolean(post.actualPublishedAt);
+    return true;
   }
 
   /**
@@ -664,11 +919,91 @@ export class AnalyticsService {
     return this.tasks().some((task) => task.id === `7d:${post.id}`);
   }
 
+  /**
+   * 投稿ジョブから Post を1件にまとめる。videoId の UNIQUE を守り、公開版スナップショットは上書きしない。
+   * 予約中は postedAt に未来時刻を入れず、7d は実公開確定後だけ作る。
+   */
+  upsertFromPublishJob(input: {
+    project: Project;
+    preset: NonNullable<AnalyticsPost['preset']>;
+    videoId: string;
+    url: string;
+    publicationState: NonNullable<AnalyticsPost['publicationState']>;
+    scheduledPublishAt?: string;
+    timezone?: string;
+    uploadedAt?: string;
+    actualPublishedAt?: string;
+    publishedAtSource?: AnalyticsPost['publishedAtSource'];
+    firstObservedPublicAt?: string;
+    publicationConfirmedAt?: string;
+    everPublished?: boolean;
+    exportRef: NonNullable<AnalyticsPost['exportRef']>;
+    content: AnalyticsPost['content'];
+  }): AnalyticsPost {
+    this.ensure();
+    const now = new Date().toISOString();
+    const byVideo = this.importedPostFor(input.videoId);
+    const byKey = this.database!
+      .prepare('SELECT id, data FROM analytics_posts WHERE project_id = ? AND preset = ?')
+      .get(input.project.id, input.preset) as { id: string; data: string } | undefined;
+    const previous = byKey
+      ? analyticsPostSchema.parse(JSON.parse(byKey.data))
+      : byVideo;
+    const id = previous?.id ?? randomUUID();
+    const postedAt = input.actualPublishedAt || previous?.actualPublishedAt || previous?.postedAt || input.uploadedAt || now;
+    const post = analyticsPostSchema.parse({
+      ...(previous ?? {}),
+      id,
+      projectId: input.project.id,
+      preset: input.preset,
+      platform: 'youtube',
+      lang: input.project.guide.exportPresets.includes(input.preset) ? (input.preset === 'yt-ja' ? 'ja' : 'en') : previous?.lang,
+      url: input.url,
+      postedAt,
+      importOrigin: 'cvcs',
+      youtubeVideoId: input.videoId,
+      channelId: previous?.channelId,
+      publicationState: input.publicationState,
+      scheduledPublishAt: input.scheduledPublishAt,
+      timezone: input.timezone,
+      uploadedAt: input.uploadedAt ?? previous?.uploadedAt,
+      firstObservedPublicAt: input.firstObservedPublicAt ?? previous?.firstObservedPublicAt,
+      actualPublishedAt: input.actualPublishedAt ?? previous?.actualPublishedAt,
+      publishedAtSource: input.publishedAtSource ?? previous?.publishedAtSource,
+      publicationConfirmedAt: input.publicationConfirmedAt ?? previous?.publicationConfirmedAt,
+      everPublished: input.everPublished ?? previous?.everPublished,
+      exportRef: previous?.exportRef ?? input.exportRef,
+      content: previous?.exportRef ? previous.content : input.content,
+      templateId: previous?.templateId ?? input.project.templateId,
+      hookPattern: previous?.hookPattern ?? input.project.hookPattern,
+      experimentId: previous?.experimentId ?? input.project.experimentRef?.experimentId,
+      experimentArm: previous?.experimentArm ?? input.project.experimentRef?.arm,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    });
+    const claimed = this.videoClaimedBy(input.videoId, [id, byVideo?.id]);
+    if (byVideo && byVideo.id !== id) this.absorbImported(byVideo.id, id);
+    this.database!
+      .prepare(
+        `INSERT INTO analytics_posts (id, project_id, preset, posted_at, youtube_video_id, data)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id, preset) DO UPDATE SET
+           id = excluded.id,
+           posted_at = excluded.posted_at,
+           youtube_video_id = excluded.youtube_video_id,
+           data = excluded.data`,
+      )
+      .run(post.id, post.projectId ?? null, post.preset ?? null, post.postedAt, claimed ? null : input.videoId, JSON.stringify(post));
+    if (this.shouldReview(post) && post.actualPublishedAt) this.ensureReviewTask(post, now);
+    return post;
+  }
+
   ensure24hTasks(): void {
     if (!this.database) return;
     const nowIso = new Date().toISOString();
     for (const post of this.posts()) {
       if (!post.url.trim() || !post.postedAt || !post.projectId) continue;
+      if (!this.shouldReview(post)) continue;
       const id = `24h:${post.id}`;
       if (this.tasks().some((task) => task.id === id)) continue;
       const posted = new Date(post.postedAt);
@@ -696,7 +1031,8 @@ export class AnalyticsService {
     const id = `7d:${post.id}`;
     const existing = this.tasks().find((item) => item.id === id);
     if (existing) return;
-    const dueAt = dueAtFor7d(post.postedAt);
+    const start = post.actualPublishedAt || post.postedAt;
+    const dueAt = dueAtFor7d(start);
     const status = new Date(dueAt).getTime() <= Date.now() ? 'ready' : 'waiting';
     const task: AnalysisTask = analysisTaskSchema.parse({
       id,
@@ -880,5 +1216,6 @@ export const refreshAnalytics = async (
     const current = migrated ? await save(migrated) : project;
     service.syncProject(current);
   }
+  service.ensurePublishedSnapshots(projects);
   return service.bundle();
 };

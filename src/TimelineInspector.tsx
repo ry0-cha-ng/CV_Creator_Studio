@@ -12,12 +12,13 @@ import {
   type SceneKey,
 } from '../shared/schema/project';
 import { withAimMarker } from '../shared/aim-marker';
+import { FOCUS_CROP_ZOOM, focusCropCenterYOf, focusCropZoomOf, roundFocusZoom } from '../shared/layout-focus';
 import { annotationStyleOf, getAnnotationStyle, zoomChromeThickness } from '../shared/annotation-style';
 import { clampVideoAimZoomOrigin, defaultSceneAimZoom, VIDEO_AIM_FRAME, VIDEO_AIM_ZOOM_RATIO } from '../shared/aim-zoom';
 import { AnnotationWeightField } from './AnnotationWeightField';
 import { MarkerAxisControl } from './MarkerAxisControl';
 import type { Timeline, TimelineItem } from '../shared/schema/timeline';
-import { DEMO_DURATION_MIN, SCENE_BAND, activeTimeline, defaultLoopRange, playbackSceneKey, sceneBgmLevel, setSceneAudioLevel, setVolumePoint, trimLimits, trimTimelineItem, withDemoDuration } from '../shared/timeline';
+import { applySceneCutDuration, DEMO_DURATION_MIN, SCENE_BAND, activeTimeline, defaultLoopRange, playbackSceneKey, sceneBgmLevel, setSceneAudioLevel, setVolumePoint, trimLimits } from '../shared/timeline';
 import { AudioPanel } from './AudioPanel';
 import { LineupPage, PublishPage, BgmGainFields } from './ProjectInspector';
 import { CLIP_DRAG_TYPE, type TimelineSelection } from './timeline-model';
@@ -34,6 +35,56 @@ import {
 } from '../shared/s4-cta';
 
 type InspectorPage = 'selection' | 'lineup' | 'publish' | 'audio';
+
+const ZoomStep = ({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (next: number) => void;
+}) => (
+  <div className="gd-trim-time">
+    <span className="gd-trim-time-label">{label}</span>
+    <button
+      type="button"
+      className="gd-nudge"
+      aria-label={`${label}を戻す`}
+      disabled={value <= min + 1e-6}
+      onClick={() => onChange(Number((value - step).toFixed(2)))}
+    >
+      ‹
+    </button>
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={Number(value.toFixed(2))}
+      aria-label={label}
+      onChange={(event) => {
+        const next = Number(event.target.value);
+        if (Number.isFinite(next)) onChange(next);
+      }}
+    />
+    <button
+      type="button"
+      className="gd-nudge"
+      aria-label={`${label}を進める`}
+      disabled={value >= max - 1e-6}
+      onClick={() => onChange(Number((value + step).toFixed(2)))}
+    >
+      ›
+    </button>
+  </div>
+);
 
 type Props = {
   project: Project;
@@ -490,19 +541,17 @@ export const TimelineInspector = ({
   };
 
   const setClipDuration = (item: TimelineItem, seconds: number): void => {
-    onChange((current) => {
-      const timelineNext = trimTimelineItem(
-        activeTimeline(current),
-        item.id,
-        'end',
+    onChange((current) =>
+      applySceneCutDuration(
+        {
+          ...current,
+          timelineEdited: true,
+          timeline: current.timeline ?? activeTimeline(current),
+        },
+        item.sceneKey,
         seconds,
-        current.templateId,
-      );
-      return withDemoDuration(
-        { ...current, timelineEdited: true, timeline: timelineNext },
-        timelineNext,
-      );
-    });
+      ),
+    );
   };
 
   const setSceneMix = (sceneKey: SceneKey, key: 'game' | 'bgm', value: number): void => {
@@ -516,7 +565,7 @@ export const TimelineInspector = ({
           : item,
       );
       const withScenes = { ...current, scenes };
-      if (!current.timelineEdited) return withScenes;
+      if (!current.timeline && !current.timelineEdited) return withScenes;
       return {
         ...withScenes,
         timeline: setSceneAudioLevel(activeTimeline(withScenes), sceneKey, key, next),
@@ -609,12 +658,14 @@ export const TimelineInspector = ({
                   value={Number(mediaClip.in.toFixed(2))}
                   onChange={(event) => {
                     const next = Number(event.target.value);
-                    onChange((current) => ({
-                      ...current,
-                      clips: current.clips.map((item) =>
+                    onChange((current) => {
+                      const clips = current.clips.map((item) =>
                         item.id === mediaClip.id ? { ...item, in: Math.min(next, item.out - 0.1) } : item,
-                      ),
-                    }));
+                      );
+                      const updated = clips.find((item) => item.id === mediaClip.id);
+                      if (!updated) return current;
+                      return applySceneCutDuration({ ...current, clips }, clip.sceneKey, updated.out - updated.in);
+                    });
                   }}
                 />
               </label>
@@ -627,12 +678,14 @@ export const TimelineInspector = ({
                   value={Number(mediaClip.out.toFixed(2))}
                   onChange={(event) => {
                     const next = Number(event.target.value);
-                    onChange((current) => ({
-                      ...current,
-                      clips: current.clips.map((item) =>
+                    onChange((current) => {
+                      const clips = current.clips.map((item) =>
                         item.id === mediaClip.id ? { ...item, out: Math.max(next, item.in + 0.1) } : item,
-                      ),
-                    }));
+                      );
+                      const updated = clips.find((item) => item.id === mediaClip.id);
+                      if (!updated) return current;
+                      return applySceneCutDuration({ ...current, clips }, clip.sceneKey, updated.out - updated.in);
+                    });
                   }}
                 />
               </label>
@@ -659,14 +712,18 @@ export const TimelineInspector = ({
                 }));
               }}
             >
-              <option value="blur-fit">ぼかし背景</option>
               <option value="center-crop">中央切り抜き</option>
+              <option value="blur-fit">ぼかし背景</option>
+              <option value="focus">フォーカス</option>
               <option value="split">上下分割</option>
             </select>
           </label>
-          {clip.layout === 'center-crop' && scene && (
+          {clip.layout === 'focus' && (
+            <p className="inspector-note">映像 1080×1430・上部にグラデーション</p>
+          )}
+          {(clip.layout === 'center-crop' || clip.layout === 'focus') && scene && (
             <label>
-              切り抜き中心
+              {clip.layout === 'focus' ? '切り抜きの横位置' : '切り抜き中心'}
               <input
                 type="range"
                 min={0}
@@ -685,6 +742,47 @@ export const TimelineInspector = ({
                 }
               />
             </label>
+          )}
+          {clip.layout === 'focus' && scene && (
+            <label>
+              切り抜きの縦位置
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                aria-label="切り抜きの縦位置"
+                value={focusCropCenterYOf(scene)}
+                onChange={(event) =>
+                  onChange((current) => ({
+                    ...current,
+                    scenes: current.scenes.map((item) =>
+                      item.sceneKey === scene.sceneKey
+                        ? { ...item, cropCenterY: Number(event.target.value) }
+                        : item,
+                    ),
+                  }))
+                }
+              />
+            </label>
+          )}
+          {clip.layout === 'focus' && scene && (
+            <ZoomStep
+              label="切り抜き拡大率"
+              value={focusCropZoomOf(scene)}
+              min={FOCUS_CROP_ZOOM.min}
+              max={FOCUS_CROP_ZOOM.max}
+              step={FOCUS_CROP_ZOOM.step}
+              onChange={(next) => {
+                const cropZoom = roundFocusZoom(next);
+                onChange((current) => ({
+                  ...current,
+                  scenes: current.scenes.map((item) =>
+                    item.sceneKey === scene.sceneKey ? { ...item, cropZoom } : item,
+                  ),
+                }));
+              }}
+            />
           )}
           <div className="inspector-pair">
             <label>
@@ -751,58 +849,62 @@ export const TimelineInspector = ({
               </p>
             </>
           )}
-          <label>
-            素材を検索
-            <input
-              value={clipQuery}
-              placeholder="素材名やタグ"
-              onChange={(event) => setClipQuery(event.target.value)}
-            />
-          </label>
-          {clipOptions.length > 0 && (
-            <div className="drag-chip-list" aria-label="タイムラインへドラッグできる素材">
-              {clipOptions.map((item) => {
-                const itemAsset = project.assets.find((asset) => asset.id === item.assetId);
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="drag-chip"
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(CLIP_DRAG_TYPE, item.id);
-                      event.dataTransfer.effectAllowed = 'copy';
-                    }}
-                  >
-                    {fileName(itemAsset?.path ?? item.id)}
-                  </button>
-                );
-              })}
-            </div>
+          {clip.sceneKey !== 'card' && (
+            <>
+              <label>
+                素材を検索
+                <input
+                  value={clipQuery}
+                  placeholder="素材名やタグ"
+                  onChange={(event) => setClipQuery(event.target.value)}
+                />
+              </label>
+              {clipOptions.length > 0 && (
+                <div className="drag-chip-list" aria-label="タイムラインへドラッグできる素材">
+                  {clipOptions.map((item) => {
+                    const itemAsset = project.assets.find((asset) => asset.id === item.assetId);
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="drag-chip"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData(CLIP_DRAG_TYPE, item.id);
+                          event.dataTransfer.effectAllowed = 'copy';
+                        }}
+                      >
+                        {fileName(itemAsset?.path ?? item.id)}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <label>
+                このシーンの素材
+                <select
+                  value={scene?.clipId ?? ''}
+                  onChange={(event) => {
+                    const clipId = event.target.value || undefined;
+                    onChange((current) => ({
+                      ...current,
+                      scenes: current.scenes.map((item) =>
+                        item.sceneKey === clip.sceneKey ? { ...item, clipId } : item,
+                      ),
+                    }));
+                  }}
+                >
+                  <option value="">{clip.sceneKey === 'loop' ? (loopLead ? 'S1 の直前' : 'S1 と同じ映像') : '未設定'}</option>
+                  {clipOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {fileName(project.assets.find((asset) => asset.id === item.assetId)?.path ?? item.id)} (
+                      {item.in.toFixed(2)}–{item.out.toFixed(2)}s)
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
           )}
-          <label>
-            このシーンの素材
-            <select
-              value={scene?.clipId ?? ''}
-              onChange={(event) => {
-                const clipId = event.target.value || undefined;
-                onChange((current) => ({
-                  ...current,
-                  scenes: current.scenes.map((item) =>
-                    item.sceneKey === clip.sceneKey ? { ...item, clipId } : item,
-                  ),
-                }));
-              }}
-            >
-              <option value="">{clip.sceneKey === 'loop' ? (loopLead ? 'S1 の直前' : 'S1 と同じ映像') : '未設定'}</option>
-              {clipOptions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {fileName(project.assets.find((asset) => asset.id === item.assetId)?.path ?? item.id)} (
-                  {item.in.toFixed(2)}–{item.out.toFixed(2)}s)
-                </option>
-              ))}
-            </select>
-          </label>
           {clip.sceneKey === 'loop' && !scene?.clipId && (
             <p className="inspector-note">
               {loopLead
@@ -810,23 +912,30 @@ export const TimelineInspector = ({
                 : 'S1 の直前が取れないため、S1 と同じ映像を使います。別の映像を選ぶと S7 だけ差し替わります。'}
             </p>
           )}
-          <button type="button" onClick={() => onImportVideo(clip.sceneKey === 'demo' || clip.sceneKey === 'loop' ? clip.sceneKey : undefined)} disabled={busy}>
-            {clip.sceneKey === 'demo' ? '＋ 実践動画' : '＋ 録画を取り込む'}
-          </button>
-          <button type="button" disabled={!mediaClip} onClick={() => onEditRange(playbackSceneKey(project, clip.sceneKey))}>
-            範囲を映像で指定
-          </button>
+          {clip.sceneKey !== 'card' && (
+            <>
+              <button type="button" onClick={() => onImportVideo(clip.sceneKey === 'demo' || clip.sceneKey === 'loop' ? clip.sceneKey : undefined)} disabled={busy}>
+                {clip.sceneKey === 'demo' ? '＋ 実践動画' : '＋ 録画を取り込む'}
+              </button>
+              <button type="button" disabled={!mediaClip} onClick={() => onEditRange(playbackSceneKey(project, clip.sceneKey))}>
+                範囲を映像で指定
+              </button>
+            </>
+          )}
           {clip.sceneKey !== 'demo' && (
             <label>
               尺（秒）
               <input
                 type="number"
-                min={trimLimits(clip, timeline.items, project.templateId).min}
+                min={trimLimits(clip, timeline.items).min}
                 step={0.1}
                 value={Number(clip.duration.toFixed(2))}
                 onChange={(event) => setClipDuration(clip, Number(event.target.value))}
               />
             </label>
+          )}
+          {clip.sceneKey === 'card' && (
+            <p className="inspector-note">完成カードの表示秒数です。映像の切り抜きはありません。</p>
           )}
           {clip.sceneKey === 'demo' && (
             <DemoDurationControl

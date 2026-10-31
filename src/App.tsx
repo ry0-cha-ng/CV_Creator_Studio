@@ -3,10 +3,16 @@ import type { PlayerRef } from '@remotion/player';
 import { getDurationInFrames } from '../remotion/LineupShortStandard';
 import { bounceChargeLabel } from '../shared/bounce-charge';
 import { jobsForPresets } from '../shared/export-copy';
-import { assignClipsFromRoles, defaultRoleForNewVideo, exportContentStamp, followPublishing } from '../shared/guide';
+import {
+  assignClipsFromRoles,
+  defaultRoleForNewVideo,
+  exportContentStamp,
+  followPublishing,
+  publishingPresets,
+} from '../shared/guide';
 import type { AudioUsageRecord, ProjectSummary } from '../shared/ipc';
 import type { Project, SceneKey } from '../shared/schema/project';
-import { applyDemoDurationToProject, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
+import { applyDemoDurationToProject, applySceneCutDuration, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
 import { useStudioStore, type SaveCommit } from './store';
 import { TimelinePanel } from './TimelinePanel';
 import { PreviewStage } from './PreviewStage';
@@ -19,6 +25,7 @@ import { DetailShell, ExperimentNew, WeeklyReview } from './analytics/DetailScre
 import { GuideAnalysis, ReviewHome } from './analytics/ReviewScreens';
 import { readyTasks } from '../shared/analytics';
 import type { AnalyticsBundle, PrimaryVariable } from '../shared/schema/analytics';
+import type { YoutubeExperimentLink } from '../shared/youtube-compare';
 import {
   DELIVERY_PRESET_ORDER,
   DELIVERY_PRESETS,
@@ -74,6 +81,7 @@ export const App = () => {
   const [pausedToday, setPausedToday] = useState(false);
   const [publishHold, setPublishHold] = useState(false);
   const [prefillVariable, setPrefillVariable] = useState<PrimaryVariable | undefined>(undefined);
+  const [experimentLink, setExperimentLink] = useState<YoutubeExperimentLink | undefined>(undefined);
   const {
     workspace,
     projects,
@@ -91,10 +99,15 @@ export const App = () => {
     store.setProjects(await window.studio.listProjects());
   };
 
+  useEffect(() => window.studio.onExportProgress(store.setExportProgress), []);
+
   useEffect(() => {
+    document.title = 'CV Creator Studio';
+    if (workspace) return;
     void (async () => {
       try {
         const selectedWorkspace = await window.studio.getWorkspace();
+        if (useStudioStore.getState().workspace) return;
         store.setWorkspace(selectedWorkspace);
         if (selectedWorkspace) {
           store.setProjects(await window.studio.listProjects());
@@ -106,8 +119,7 @@ export const App = () => {
         store.setError(errorMessage(initializationError));
       }
     })();
-    return window.studio.onExportProgress(store.setExportProgress);
-  }, []);
+  }, [workspace]);
 
   useEffect(() => {
     if (!project || !dirty) return;
@@ -469,7 +481,8 @@ export const App = () => {
         const outputs = result.files;
         const snapshot = useStudioStore.getState();
         const drafted = structuredClone(snapshot.project!);
-        drafted.guide.exportPresets = exportPresets;
+        const deliveredPresets = exportPresets.length > 0 ? exportPresets : publishingPresets(drafted);
+        if (deliveredPresets.length > 0) drafted.guide.exportPresets = deliveredPresets;
         drafted.guide.exportWithoutBgm = exportWithoutBgm;
         drafted.publishing.links = { ...drafted.publishing.links, ...result.links };
         const exportedProject = followPublishing(drafted);
@@ -483,7 +496,7 @@ export const App = () => {
         exportedProject.guide.lastExport = {
           at: new Date().toISOString(),
           projectUpdatedAt: exportedProject.updatedAt,
-          presets: exportPresets,
+          presets: deliveredPresets,
           contentStamp: exportContentStamp(exportedProject),
           outputDir,
         };
@@ -493,7 +506,7 @@ export const App = () => {
         const seconds = Math.round((elapsed % 60000) / 1000);
         const clock = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
         const count = (slot: 'ja' | 'en' | 'x') =>
-          outputs.filter((file) => file.includes(`_std_${slot}`)).length;
+          outputs.filter((file) => file.includes(`_lineup_${slot}`)).length;
         setExportNote(
           `English ${count('en')}ファイル · 日本語 ${count('ja')}ファイル · X ${count('x')}ファイル · ${clock}`,
         );
@@ -510,7 +523,7 @@ export const App = () => {
           useStudioStore.getState().updateProject((current) => {
             if (current.status === 'editing') current.status = 'exported';
             current.guide.lastExport = exportedProject.guide.lastExport;
-            current.guide.exportPresets = exportPresets;
+            if (deliveredPresets.length > 0) current.guide.exportPresets = deliveredPresets;
             current.publishing.links = { ...current.publishing.links, ...result.links };
             current.guide.exportWithoutBgm = exportWithoutBgm;
             return current;
@@ -572,8 +585,9 @@ export const App = () => {
           setArea('review');
           setAnalyticsPage('weekly');
         },
-        openExperimentNew: (variable) => {
+        openExperimentNew: (variable, link) => {
           setPrefillVariable(variable);
+          setExperimentLink(link);
           setArea('detail');
           setAnalyticsPage('experiment-new');
         },
@@ -629,7 +643,11 @@ export const App = () => {
       analyticsPage === 'weekly' ? (
         <WeeklyReview />
       ) : analyticsPage === 'experiment-new' ? (
-        <ExperimentNew variable={prefillVariable} />
+        <ExperimentNew
+          key={experimentLink?.postIds.join(',') ?? prefillVariable ?? 'new'}
+          variable={prefillVariable}
+          link={experimentLink}
+        />
       ) : analyticsPage === 'guide' && focusTaskId ? (
         <GuideAnalysis taskId={focusTaskId} />
       ) : area === 'detail' ? (
@@ -702,10 +720,7 @@ export const App = () => {
                   target.in = range.in;
                   target.out = range.out;
                 }
-                if (editingSceneKey === 'demo') {
-                  return applyDemoDurationToProject(current, range.out - range.in);
-                }
-                return current;
+                return applySceneCutDuration(current, editingSceneKey, range.out - range.in);
               })
             }
             onExtractStill={(role, seconds) => extractStill(editingClipId, role, seconds)}

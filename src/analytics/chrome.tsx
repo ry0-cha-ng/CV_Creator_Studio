@@ -202,7 +202,7 @@ export const AboutButton = ({ screen }: { screen: AnalyticsScreenId }) => {
             </button>
           </div>
           <div className="an-flow" aria-label="流れの中の位置">
-            {STAGES.map((stage, index) => (
+            {(copy.stage === '競合' ? [...STAGES, '競合'] : STAGES).map((stage, index) => (
               <span key={stage} className="an-flow-item">
                 {index > 0 && <span className="an-flow-arrow" aria-hidden="true">→</span>}
                 <span className={stage === copy.stage ? 'is-on' : ''}>{stage}</span>

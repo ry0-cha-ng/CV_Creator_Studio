@@ -62,12 +62,12 @@ export const DELIVERY_PRESETS: Record<DeliveryPresetId, DeliveryPreset> = {
   'tt-jp': {
     id: 'tt-jp',
     label: 'TikTok（日本語）',
-    detail: '日本語の動画・完成カード・サムネイル・投稿文',
+    detail: '日本語の動画。初期はオフ',
     platform: 'tiktok',
     videoLanguage: 'ja',
     copyLanguages: ['ja'],
     outputs: ['video', 'card', 'thumbnail', 'txt'],
-    defaultOn: true,
+    defaultOn: false,
     utmSource: 'tiktok',
     utmMedium: 'short',
   },
@@ -251,14 +251,20 @@ export const campaignDate = (plannedPostDate: string | undefined, now = new Date
   return source.slice(0, 10).replaceAll('-', '');
 };
 
-export const provisionalBasename = (input: {
+export const formatExportBasename = (input: {
   plannedPostDate?: string;
   map: string;
+  site: string;
   agent: string;
   slot: BasenameSlot;
+  variant?: number;
   now?: Date;
 }): string =>
-  `${campaignDate(input.plannedPostDate, input.now)}_${input.map}_${input.agent}_std_${input.slot}_v1`;
+  `${campaignDate(input.plannedPostDate, input.now)}_${input.map}_${input.site}_${input.agent}_lineup_${input.slot}_v${input.variant ?? 1}`;
+
+export const provisionalBasename = (
+  input: Omit<Parameters<typeof formatExportBasename>[0], 'variant'>,
+): string => formatExportBasename(input);
 
 export const presetOutputsLabel = (id: DeliveryPresetId): string => {
   const labels: Record<DeliveryPreset['outputs'][number], string> = {

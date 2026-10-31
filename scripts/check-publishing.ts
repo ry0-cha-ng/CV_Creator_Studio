@@ -109,4 +109,17 @@ const youtubeTasks = extra?.tasks.filter((task) => task.type === 'youtube-publis
 if (youtubeTasks.length !== 2) fail('one task per selected youtube preset');
 if (youtubeTasks[0]?.preset !== 'yt-global' || youtubeTasks[1]?.preset !== 'yt-ja') fail('youtube preset order');
 
+const recovered = structuredClone(project);
+recovered.guide.exportPresets = [];
+recovered.guide.lastExport = { ...recovered.guide.lastExport!, presets: [] };
+recovered.publishing.links = {
+  'yt-global': 'https://clutchvault.app/en/?utm_content=20261030_Bind_en_v1',
+  'x-jp': 'https://clutchvault.app/?utm_content=20261030_Bind_x_v1',
+};
+sequence = 400;
+const fromLinks = createPublishing(recovered, now, nextId);
+if (!fromLinks) fail('thumbnail-only export should still open publishing from file links');
+const recoveredPresets = fromLinks.tasks.flatMap((task) => (task.preset ? [task.preset] : []));
+if (recoveredPresets.join(',') !== 'yt-global,x-jp') fail(`recovered presets ${recoveredPresets.join(',')}`);
+
 console.log('publishing checks ok');

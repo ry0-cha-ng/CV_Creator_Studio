@@ -1,5 +1,11 @@
-import { exportContentStamp } from '../shared/guide';
+import { applyInheritance, exportContentStamp } from '../shared/guide';
 import { captionTextFor, createDefaultProject, parseProject } from '../shared/schema/project';
+import {
+  fitFocusHook,
+  resolveThumbCrop,
+  thumbnailLayoutOf,
+  THUMB_FOCUS,
+} from '../shared/thumbnail-focus';
 import {
   abilityAbbreviation,
   fitThumbnailHookFontSize,
@@ -7,6 +13,7 @@ import {
   hookFrameRequest,
   thumbnailFrameStatus,
   thumbnailHookLayout,
+  thumbnailHookLines,
   thumbnailIconWarning,
   thumbnailMapLabel,
   thumbnailSourceAt,
@@ -44,9 +51,16 @@ hook.thumbText = { ja: '1行目\n2行目', en: '' };
 if (captionTextFor(hook, 'ja', 'thumb') !== '1行目\n2行目') fail('thumbnail uses its own breaks');
 if (captionTextFor(hook, 'en', 'thumb') !== hook.text.en) fail('empty thumbnail text follows the video');
 if (captionTextFor(hook, 'ja', 'video') !== hook.text.ja) fail('video caption stays independent');
+if (thumbnailHookLines('1行目\n2行目\n3行目').join('|') !== '1行目|2行目|3行目') {
+  fail('thumbnail hook keeps 3 explicit lines');
+}
+if (thumbnailHookLines('1\n2\n3\n4').length !== 3) fail('thumbnail hook drops a 4th line');
 const threeLines = thumbnailHookLayout('1行目\n2行目\n3行目');
 const twoLines = thumbnailHookLayout('1行目\n2行目');
 if (threeLines.maxLines !== 3 || THUMBNAIL.hookMaxLines !== 3) fail('thumbnail hook allows 3 lines');
+if (threeLines.maxHeight !== Math.ceil(THUMBNAIL.hookFontSize * THUMBNAIL.hookLineHeight * 3)) {
+  fail(`3-line box ${threeLines.maxHeight}`);
+}
 if (threeLines.top !== THUMBNAIL.hookTop || twoLines.top !== THUMBNAIL.hookTop) {
   fail(`headline should stay at ${THUMBNAIL.hookTop}, got ${threeLines.top}/${twoLines.top}`);
 }
@@ -117,5 +131,93 @@ const round = parseProject({
 if (round.thumbnailFrame?.assetId !== 'a' || round.thumbnailFrame.sourceTime !== 1.25) fail('thumbnail frame roundtrip');
 const legacy = parseProject(JSON.parse(JSON.stringify(createDefaultProject('legacy'))));
 if (legacy.thumbnailFrame) fail('legacy projects stay on the hook frame');
+
+const fresh = parseProject(JSON.parse(JSON.stringify(createDefaultProject('fresh-focus'))));
+if (fresh.thumbnail?.layout !== 'focus') fail('new projects start on focus');
+
+const withoutThumb = JSON.parse(JSON.stringify(createDefaultProject('no-thumb'))) as Record<string, unknown>;
+delete withoutThumb.thumbnail;
+const classicRead = parseProject(withoutThumb);
+if (classicRead.thumbnail) fail('missing thumbnail stays absent');
+if (thumbnailLayoutOf(classicRead) !== 'classic') fail('missing thumbnail reads as classic');
+
+const broken = parseProject({
+  ...withoutThumb,
+  id: 'broken-thumb',
+  thumbnail: { layout: 'sideways', zoom: 2, focus: { x: -1, y: 4 } },
+});
+if (broken.thumbnail?.layout !== 'classic') fail(`bad layout ${broken.thumbnail?.layout}`);
+if (broken.thumbnail?.zoom !== 1.5) fail(`zoom clamp ${broken.thumbnail?.zoom}`);
+if (broken.thumbnail?.focus?.x !== 0 || broken.thumbnail?.focus?.y !== 1) {
+  fail(`focus clamp ${JSON.stringify(broken.thumbnail?.focus)}`);
+}
+const dropped = parseProject({ ...withoutThumb, id: 'dropped-thumb', thumbnail: 'nope' });
+if (dropped.thumbnail) fail('garbage thumbnail should be dropped');
+const lowZoom = parseProject({
+  ...withoutThumb,
+  id: 'low-zoom',
+  thumbnail: { layout: 'focus', zoom: 0.8, focus: { x: 0.2, y: 'nope' } },
+});
+if (lowZoom.thumbnail?.layout !== 'focus' || lowZoom.thumbnail.zoom !== 1 || lowZoom.thumbnail.focus) {
+  fail(`low zoom ${JSON.stringify(lowZoom.thumbnail)}`);
+}
+
+const center = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0.5, y: 0.5 }, 1);
+if (Math.abs(center.h - 1080) > 1e-6) fail(`center height ${center.h}`);
+if (Math.abs(center.w - (1080 * 1080) / 1130) > 1e-6) fail(`center width ${center.w}`);
+if (Math.abs(center.x - (1920 - center.w) / 2) > 1e-6 || center.y !== 0) fail(`center origin ${center.x},${center.y}`);
+const corner = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0, y: 0 }, 1);
+const far = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 1, y: 1 }, 1);
+if (corner.x < 0 || corner.y < 0 || far.x + far.w > 1920 + 1e-6 || far.y + far.h > 1080 + 1e-6) {
+  fail('crop left the frame');
+}
+const zoomed = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0.5, y: 0.5 }, 1.5);
+if (Math.abs(zoomed.h - 720) > 1e-6 || Math.abs(zoomed.upscale - 1130 / 720) > 1e-6) {
+  fail(`zoom 1.5 ${zoomed.h} ${zoomed.upscale}`);
+}
+const clampedLow = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0.5, y: 0.5 }, 0.8);
+const clampedHigh = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0.5, y: 0.5 }, 2);
+if (Math.abs(clampedLow.h - 1080) > 1e-6 || Math.abs(clampedHigh.h - 720) > 1e-6) fail('zoom clamp');
+const soft = resolveThumbCrop({ w: 1280, h: 720 }, { x: 0.5, y: 0.5 }, 1.5);
+if (soft.upscale <= THUMB_FOCUS.zoom.warnUpscale) fail(`720p upscale ${soft.upscale}`);
+const sample = resolveThumbCrop({ w: 1920, h: 1080 }, { x: 0.57, y: 0.5 }, 1);
+if (Math.round(sample.x) !== 578 || sample.y !== 0 || Math.round(sample.w) !== 1032 || sample.h !== 1080) {
+  fail(`sample crop ${JSON.stringify(sample)}`);
+}
+
+if (THUMB_FOCUS.hook.maxLines !== 3) fail('focus hook allows 3 lines');
+const fitted = fitFocusHook('Flush them out before the retake', 'en');
+if (fitted.warning || fitted.lines.length !== 3 || fitted.fontSize !== 96) {
+  fail(`english fit ${fitted.fontSize} ${fitted.lines.length} ${fitted.warning}`);
+}
+const overflowing = fitFocusHook(`${'BURN THE SITE FROM THIS LINEUP '.repeat(8)}NOW`, 'en');
+if (!overflowing.warning || overflowing.fontSize !== 76 || overflowing.lines.length !== 3) {
+  fail(`overflow ${overflowing.fontSize} ${overflowing.lines.length} ${overflowing.warning}`);
+}
+const explicit = fitFocusHook("See them?\nBurn it.", 'en');
+const explicitText = explicit.lines.map((line) => line.map((run) => run.text).join(''));
+if (explicitText[0] !== 'SEE THEM?' || explicitText[1] !== 'BURN IT.') {
+  fail(`explicit breaks ${explicitText.join('|')}`);
+}
+const threeFocus = fitFocusHook("See them?\nBurn it.\nTake site.", 'en');
+if (threeFocus.warning || threeFocus.lines.length !== 3) {
+  fail(`3 explicit lines ${threeFocus.lines.length} ${threeFocus.warning}`);
+}
+const focusBottom =
+  THUMB_FOCUS.hook.top + threeFocus.fontSize * THUMB_FOCUS.hook.en.lineHeight * threeFocus.lines.length;
+if (focusBottom > THUMB_FOCUS.infoBar.y) {
+  fail(`3-line focus hook overlaps the info bar ${focusBottom}`);
+}
+const fourFocus = fitFocusHook("One\nTwo\nThree\nFour", 'en');
+if (!fourFocus.warning || fourFocus.lines.length !== 3) {
+  fail(`a 4th line stays inside the 3-line box ${fourFocus.lines.length} ${fourFocus.warning}`);
+}
+
+const source = createDefaultProject('inherit-source');
+source.thumbnail = { layout: 'focus', zoom: 1.3, focus: { x: 0.2, y: 0.8 }, frame: { assetId: 'a', timeSec: 3 } };
+const inherited = applyInheritance(createDefaultProject('inherit-child'), source, ['thumbnail']);
+if (inherited.thumbnail?.layout !== 'focus' || inherited.thumbnail.zoom !== 1.3) fail('inherit layout and zoom');
+if (inherited.thumbnail.frame || inherited.thumbnail.focus) fail('frame and focus stay behind');
+if (!inherited.inheritedFrom?.items.includes('thumbnail')) fail('thumbnail is recorded as inherited');
 
 console.log('thumbnail checks ok');

@@ -6,14 +6,15 @@ export const timelineItemSchema = z.object({
   sceneKey: sceneKeySchema,
   presentation: z
     .enum(['standard', 'guide-title', 'guide-steps', 'guide-card', 'guide-demo'])
-    .default('standard'),
+    .default('standard')
+    .transform((): 'standard' => 'standard'),
   start: z.number().min(0),
   duration: z.number().positive(),
   sourceOffset: z.number().min(0).default(0),
   speed: z.number().min(0.25).max(4).default(1),
-  layout: z.enum(['center-crop', 'blur-fit', 'split']).default('blur-fit'),
+  layout: z.enum(['center-crop', 'blur-fit', 'focus', 'split']).default('blur-fit'),
   transition: z.enum(['cut', 'fade', 'slide']).default('cut'),
-  volume: z.number().min(0).max(1).default(0.15),
+  volume: z.number().min(0).max(1).default(0.1),
   arrow: z
     .object({
       x1: z.number().min(0).max(1),

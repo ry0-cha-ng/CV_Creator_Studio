@@ -30,6 +30,7 @@ export const VARIABLE_LABELS: Record<PrimaryVariable, string> = {
   postTime: '投稿時刻',
   agent: 'エージェント',
   ability: 'アビリティ',
+  thumbnail: 'サムネイル',
 };
 
 export const METRIC_LABELS: Record<PrimaryMetric, string> = {
@@ -141,6 +142,12 @@ export const VARIABLE_PRESETS: Record<PrimaryVariable, VariablePreset> = {
     metric: 'lineupSaves',
     hypothesis: 'アビリティを変えると、定点の保存が変わる',
   },
+  thumbnail: {
+    control: '従来',
+    variant: 'フォーカス',
+    metric: 'views',
+    hypothesis: 'サムネイルの配置を変えると、視聴回数が変わる',
+  },
 };
 
 const SAFE_VARIABLES = new Set<PrimaryVariable>([
@@ -151,6 +158,7 @@ const SAFE_VARIABLES = new Set<PrimaryVariable>([
   'agent',
   'ability',
   'bgm',
+  'thumbnail',
 ]);
 
 export const isSafeVariable = (variable: PrimaryVariable): boolean => SAFE_VARIABLES.has(variable);
@@ -321,6 +329,7 @@ export const attributesOf = (post: AnalyticsPost): AttributeMap => ({
   postTime: post.postedAt.slice(11, 16) || '未設定',
   agent: post.content.agent,
   ability: post.content.ability,
+  thumbnail: post.thumbnailLayout === 'focus' || post.content.thumbnailLayout === 'focus' ? 'フォーカス' : '従来',
 });
 
 export const differingVariables = (posts: AnalyticsPost[]): PrimaryVariable[] => {
@@ -416,6 +425,11 @@ export const applySafeValue = (
   }
   if (variable === 'length') {
     next.analytics.durationLabel = value;
+    return next;
+  }
+  if (variable === 'thumbnail') {
+    const layout = value === 'フォーカス' || value === 'focus' ? 'focus' : 'classic';
+    next.thumbnail = { ...next.thumbnail, layout };
   }
   return next;
 };
@@ -677,6 +691,7 @@ export const analyticsCsv = (bundle: AnalyticsBundle): string => {
     'ability',
     'hook',
     'opening',
+    'thumbnail',
     'views',
     'averagePercentageViewed',
     'clutchVaultVisits',
@@ -709,6 +724,7 @@ export const analyticsCsv = (bundle: AnalyticsBundle): string => {
         post.content.ability,
         post.hookPattern,
         post.openingType ?? '',
+        post.thumbnailLayout === 'focus' || post.content.thumbnailLayout === 'focus' ? 'focus' : 'classic',
         snapshot?.views,
         snapshot?.averagePercentageViewed,
         snapshot?.clutchVaultVisits,

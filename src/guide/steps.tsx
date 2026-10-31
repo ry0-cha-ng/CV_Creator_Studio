@@ -1,17 +1,36 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
-import { Player, Thumbnail, type PlayerRef } from '@remotion/player';
+import { Player, type PlayerRef } from '@remotion/player';
 import { LineupShortStandard } from '../../remotion/LineupShortStandard';
-import { LineupThumbnail } from '../../remotion/LineupThumbnail';
 import { withAimMarker } from '../../shared/aim-marker';
 import { ANNOTATION_FRAME_WIDTH, annotationStyleOf, getAnnotationStyle, zoomChromeThickness } from '../../shared/annotation-style';
 import { AnnotationWeightField } from '../AnnotationWeightField';
 import { MarkerAxisControl } from '../MarkerAxisControl';
 import { AimMarker, AnnotationDim } from '../../remotion/AnnotationMarks';
 import { thumbnailIconWarning } from '../../shared/thumbnail';
+import {
+  FOCUS_CROP_ZOOM,
+  focusCropCenterYOf,
+  focusCropZoomOf,
+  focusFrameOf,
+  focusOutsideDetail,
+  resolveFocusCrop,
+  roundFocusZoom,
+  sceneFocusEffects,
+} from '../../shared/layout-focus';
+import {
+  THUMB_FOCUS,
+  focusFrameSize,
+  focusUpscale,
+  resolveFocusFrame,
+  resolveThumbCrop,
+  thumbnailFocusOf,
+  thumbnailLayoutOf,
+  thumbnailZoomOf,
+} from '../../shared/thumbnail-focus';
+import { ThumbnailLayoutSwitch, ThumbnailStage, type ThumbSurface } from '../ThumbnailStage';
 import { ThumbnailFrameControls } from '../ThumbnailFrameControls';
 import { bounceChargeLabel, bounceChargeOptions } from '../../shared/bounce-charge';
 import {
-  HOOK_PATTERN_LABELS,
   applyDefaultVolumes,
   captionMetrics,
   assetFileName,
@@ -27,6 +46,8 @@ import {
   licenseSummary,
   applyPublishingMemo,
   markPublishingEdited,
+  guideStepAfter,
+  guideStepNumber,
   reviewItems,
   sceneGuideCopy,
   sceneHasRange,
@@ -49,10 +70,20 @@ import { presetOutputs } from '../../shared/guide';
 import { HandoffPanel } from '../analytics/HandoffPanel';
 import { copyForJob, guessBasename, jobsForPresets, trackingFor } from '../../shared/export-copy';
 import { prepareXPost } from '../../shared/x-post';
-import { HOOK_PATTERNS, koreanTitleUsesEnglishHook, titleIssues } from '../../shared/production';
+import { AI_ERROR_MESSAGE, type AiHandoff, type PublishingTranslation } from '../../shared/ai';
+import {
+  HOOK_PATTERNS,
+  applyPublishingTranslation,
+  koreanTitleUsesEnglishHook,
+  publishingTranslationHandEdited,
+  publishingTranslationLanguages,
+  publishingTranslationStale,
+  titleIssues,
+  type PublishingTranslationField,
+} from '../../shared/production';
 import type { AudioTrack } from '../../shared/schema/audio';
 import type { AudioUsageRecord } from '../../shared/ipc';
-import { defaultCardAimZoom, defaultCtaCaption, defaultDemoCaption, type AnnotationStyle, type Caption, type CardAimZoom, type HookPattern, type Language, type Project, type Scene } from '../../shared/schema/project';
+import { defaultCardAimZoom, defaultCtaCaption, type AnnotationStyle, type Caption, type CardAimZoom, type Language, type Project, type Scene } from '../../shared/schema/project';
 import { aimZoomBox, aimZoomSurface, cardAimPoint, clampVideoAimZoomOrigin, defaultSceneAimZoom, nudgeCardAimPoint, resolveAimZoomFor, resolveVideoAimZoom, VIDEO_AIM_FRAME, VIDEO_AIM_ZOOM_RATIO } from '../../shared/aim-zoom';
 import {
   normalizedStillFocus,
@@ -65,7 +96,7 @@ import {
   type StillFocus,
 } from '../../shared/still-focus';
 import { AimZoomChrome } from '../../remotion/AimZoomChrome';
-import { CaptionAi, PublishingAi } from '../ai/places';
+import { WordingIdeas } from './WordingIdeas';
 import type { SceneKey } from '../../shared/schema/project-keys';
 import {
   activeTimeline,
@@ -77,8 +108,9 @@ import {
   defaultLoopRange,
   playedSourceWindow,
   rangeForSceneDuration,
-  rewriteSceneRange,
+  rangeForSceneDurationFromOut,
   sceneDurationLimits,
+  sceneItemDuration,
 } from '../../shared/timeline';
 import { CTA_DESIGN_OPTIONS, type CtaDesign } from '../../shared/cta-design';
 import {
@@ -128,6 +160,7 @@ export type TrimHandles = {
   setIn: () => void;
   setOut: () => void;
   confirm: () => void;
+  nudgeCrop: ((axis: 'x' | 'y', delta: number) => void) | null;
 };
 
 const SCENE_NAME: Record<SceneKey, string> = {
@@ -140,20 +173,13 @@ const SCENE_NAME: Record<SceneKey, string> = {
   loop: 'S7 ループ',
 };
 
-const GUIDE_SCENE_NAME: Partial<Record<SceneKey, string>> = {
-  hook: 'G1 タイトル',
-  stand: 'G2 手順',
-  card: 'G3 カード',
-  demo: 'G4 デモ',
-};
-
 const update = (recipe: (project: Project) => Project): void => {
   useStudioStore.getState().updateProject(recipe);
 };
 
 const StepHead = ({ step, title, text }: { step: GuideStepId; title: string; text: string }) => (
   <header className="gd-step-head">
-    <span className="gd-kicker">STEP {step} / 10</span>
+    <span className="gd-kicker">STEP {guideStepNumber(step)} / 10</span>
     <h1>{title}</h1>
     <p>{text}</p>
   </header>
@@ -519,7 +545,6 @@ export const VideoStep = ({
     (!guess.site || guess.site === project.lineup.site) &&
     (!guess.side || guess.side === project.lineup.side);
   const differs = guess && !matches;
-  const guide = project.templateId === 't-guide';
   const selectedStructureId =
     structureTemplates.find((template) => template.id === project.structureTemplateId)?.id ??
     structureTemplates.find(
@@ -530,8 +555,7 @@ export const VideoStep = ({
         ),
     )?.id ??
     '';
-  const sceneName = (sceneKey: SceneKey): string =>
-    guide ? (GUIDE_SCENE_NAME[sceneKey] ?? sceneKey) : SCENE_NAME[sceneKey];
+  const sceneName = (sceneKey: SceneKey): string => SCENE_NAME[sceneKey];
   const sceneVideoName = (sceneKey: SceneKey): string | null => {
     const clip = project.clips.find(
       (item) => item.id === project.scenes.find((scene) => scene.sceneKey === sceneKey)?.clipId,
@@ -549,7 +573,7 @@ export const VideoStep = ({
         auto: !name && auto,
       };
     }
-    if (sceneKey === 'demo' && !guide && !sceneHasRange(project, sceneKey)) {
+    if (sceneKey === 'demo' && !sceneHasRange(project, sceneKey)) {
       return { source: '入れない', state: '任意', auto: true };
     }
     return {
@@ -598,7 +622,6 @@ export const VideoStep = ({
   }, [activeId, project]);
 
   useEffect(() => {
-    if (guide) return;
     let active = true;
     void window.studio
       .listVideoStructureTemplates()
@@ -609,7 +632,7 @@ export const VideoStep = ({
     return () => {
       active = false;
     };
-  }, [guide]);
+  }, []);
 
   useEffect(() => {
     const onStop = (): void => {
@@ -654,7 +677,7 @@ export const VideoStep = ({
       <StepHead
         step={2}
         title="動画選択"
-        text="録画を1〜3本登録します。最初の1本を各シーンの基準にします。別の録画を使うシーンは、次の「切り抜き」で切り替えられます"
+        text="録画を1〜3本登録します。最初の1本を各シーンの基準にします。別の録画を使うシーンは、「切り抜き」で切り替えられます"
       />
       {active && (
         <div className="gd-video-stage">
@@ -783,57 +806,55 @@ export const VideoStep = ({
           )}
         </div>
       )}
-      {!guide && (
-        <section className="gd-assign-block">
-          <strong>動画の構成パターン</strong>
-          <label className="gd-field">
-            使用するテンプレート
-            <select
-              value={selectedStructureId}
-              onChange={(event) => {
-                const template = structureTemplates.find(
-                  (item) => item.id === event.target.value,
-                );
-                if (!template) return;
-                update((current) =>
-                  applySceneOrder(current, template.sceneOrder, template.id, template.ctaDesign),
-                );
-              }}
-            >
-              <option value="">現在のカスタム構成</option>
-              {structureTemplates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="gd-field">
-            CTAデザイン
-            <select
-              aria-label="CTAデザイン"
-              value={resolveCtaDesign(project)}
-              onChange={(event) => {
-                const ctaDesign = event.target.value as CtaDesign;
-                update((current) => ({
-                  ...current,
-                  templateParams: { ...current.templateParams, ctaDesign },
-                }));
-              }}
-            >
-              {CTA_DESIGN_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="gd-muted">
-            {CTA_DESIGN_OPTIONS.find((option) => option.id === resolveCtaDesign(project))?.detail}
-            。構成を変えると、そのテンプレートのCTAに切り替わります。シーンの追加・並べ替えは「詳細編集」の構成パターンから行えます。
-          </p>
-        </section>
-      )}
+      <section className="gd-assign-block">
+        <strong>動画の構成パターン</strong>
+        <label className="gd-field">
+          使用するテンプレート
+          <select
+            value={selectedStructureId}
+            onChange={(event) => {
+              const template = structureTemplates.find(
+                (item) => item.id === event.target.value,
+              );
+              if (!template) return;
+              update((current) =>
+                applySceneOrder(current, template.sceneOrder, template.id, template.ctaDesign),
+              );
+            }}
+          >
+            <option value="">現在のカスタム構成</option>
+            {structureTemplates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="gd-field">
+          CTAデザイン
+          <select
+            aria-label="CTAデザイン"
+            value={resolveCtaDesign(project)}
+            onChange={(event) => {
+              const ctaDesign = event.target.value as CtaDesign;
+              update((current) => ({
+                ...current,
+                templateParams: { ...current.templateParams, ctaDesign },
+              }));
+            }}
+          >
+            {CTA_DESIGN_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="gd-muted">
+          {CTA_DESIGN_OPTIONS.find((option) => option.id === resolveCtaDesign(project))?.detail}
+          。構成を変えると、そのテンプレートのCTAに切り替わります。シーンの追加・並べ替えは「詳細編集」の構成パターンから行えます。
+        </p>
+      </section>
       <section className="gd-assign-block">
         <strong>シーンで使う動画</strong>
         <div className="gd-assign-table">
@@ -857,15 +878,11 @@ export const VideoStep = ({
         <span className={videos.length > 0 ? 'is-ok' : 'is-idle'}>
           {videos.length > 0 ? '✓ 動画が1本以上' : '動画が1本以上'}
         </span>
-        {guide ? (
-          <span className="is-ok">✓ 実戦デモ（ない場合は最初の動画から切り出します）</span>
-        ) : (
-          <span className={sceneHasRange(project, 'demo') ? 'is-ok' : 'is-warn'}>
-            {sceneHasRange(project, 'demo')
-              ? '✓ 実戦デモ'
-              : '! 実戦デモ（任意。ない場合は S6 を入れません）'}
-          </span>
-        )}
+        <span className={sceneHasRange(project, 'demo') ? 'is-ok' : 'is-warn'}>
+          {sceneHasRange(project, 'demo')
+            ? '✓ 実戦デモ'
+            : '! 実戦デモ（任意。ない場合は S6 を入れません）'}
+        </span>
       </section>
       {pendingDelete && (
         <div className="confirm-backdrop" onClick={() => setPendingDeleteId(null)}>
@@ -922,30 +939,95 @@ const movedTrimRange = (
   drag: { kind: 'move' | 'in' | 'out'; startIn: number; startOut: number; startPlayhead: number },
   delta: number,
   duration: number,
-  minSpan: number,
 ): { in: number; out: number; playhead: number } => {
   const span = drag.startOut - drag.startIn;
-  if (drag.kind === 'move') {
-    let nextIn = drag.startIn + delta;
-    let nextOut = drag.startOut + delta;
-    if (nextIn < 0) {
-      nextIn = 0;
-      nextOut = Math.min(duration, span);
-    } else if (nextOut > duration) {
-      nextOut = duration;
-      nextIn = Math.max(0, duration - span);
-    }
-    const shift = nextIn - drag.startIn;
-    const playhead = Math.min(nextOut, Math.max(nextIn, drag.startPlayhead + shift));
-    return { in: nextIn, out: nextOut, playhead };
-  }
   if (drag.kind === 'in') {
-    const nextIn = Math.min(Math.max(0, drag.startIn + delta), drag.startOut - minSpan);
-    return { in: nextIn, out: drag.startOut, playhead: nextIn };
+    const next = rangeForSceneDuration(drag.startIn + delta, span, duration);
+    return { ...next, playhead: next.in };
   }
-  const nextOut = Math.max(Math.min(duration, drag.startOut + delta), drag.startIn + minSpan);
-  return { in: drag.startIn, out: nextOut, playhead: nextOut };
+  if (drag.kind === 'out') {
+    const next = rangeForSceneDurationFromOut(drag.startOut + delta, span, duration);
+    return { ...next, playhead: next.out };
+  }
+  let nextIn = drag.startIn + delta;
+  let nextOut = drag.startOut + delta;
+  if (nextIn < 0) {
+    nextIn = 0;
+    nextOut = Math.min(duration, span);
+  } else if (nextOut > duration) {
+    nextOut = duration;
+    nextIn = Math.max(0, duration - span);
+  }
+  const shift = nextIn - drag.startIn;
+  const playhead = Math.min(nextOut, Math.max(nextIn, drag.startPlayhead + shift));
+  return { in: nextIn, out: nextOut, playhead };
 };
+
+const roundTrimTime = (value: number): number => Math.round(value * 100) / 100;
+
+const TrimTimeField = ({
+  label,
+  kbd,
+  value,
+  min,
+  max,
+  step,
+  disabled = false,
+  onChange,
+  onCommitFromPlayhead,
+}: {
+  label: string;
+  kbd?: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  disabled?: boolean;
+  onChange: (next: number) => void;
+  onCommitFromPlayhead?: () => void;
+}) => (
+  <div className="gd-trim-time">
+    {kbd && onCommitFromPlayhead ? (
+      <button type="button" className="gd-io" disabled={disabled} onClick={onCommitFromPlayhead}>
+        <kbd>{kbd}</kbd>
+        {label}
+      </button>
+    ) : (
+      <span className="gd-trim-time-label">{label}</span>
+    )}
+    <button
+      type="button"
+      className="gd-nudge"
+      aria-label={`${label}を戻す`}
+      disabled={disabled || value <= min + 1e-6}
+      onClick={() => onChange(roundTrimTime(value - step))}
+    >
+      ‹
+    </button>
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={Number(value.toFixed(2))}
+      aria-label={label}
+      disabled={disabled}
+      onChange={(event) => {
+        const next = Number(event.target.value);
+        if (Number.isFinite(next)) onChange(next);
+      }}
+    />
+    <button
+      type="button"
+      className="gd-nudge"
+      aria-label={`${label}を進める`}
+      disabled={disabled || value >= max - 1e-6}
+      onClick={() => onChange(roundTrimTime(value + step))}
+    >
+      ›
+    </button>
+  </div>
+);
 
 const clampAimAppear = (project: Project, sceneKey: SceneKey, span: number): void => {
   const marker = project.scenes.find((item) => item.sceneKey === sceneKey)?.aimMarker;
@@ -1137,14 +1219,13 @@ export const TrimStep = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playhead, setPlayhead] = useState(0);
-  const [askTimeline, setAskTimeline] = useState(false);
   const [showFrameGuides, setShowFrameGuides] = useState(false);
   const [previewScale, setPreviewScale] = useState(1.5);
   const [savedDefaults, setSavedDefaults] = useState<Partial<Record<SceneKey, number>>>({});
   const [secondsDraft, setSecondsDraft] = useState('');
   const [emptyPick, setEmptyPick] = useState('');
   const secondsFocus = useRef(false);
-  const tabs = trimScenes(project).filter((key) => key !== 'card');
+  const tabs = trimScenes(project);
   const videos = videosOf(project);
   const emptyAsset = videos.find((item) => item.id === emptyPick) ?? videos[0];
   const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
@@ -1160,6 +1241,7 @@ export const TrimStep = ({
   const duration = asset?.meta.duration ?? 0;
   const frame = 1 / project.templateParams.fps;
   const length = clip ? clip.out - clip.in : 0;
+  const sceneLength = sceneKey === 'card' ? sceneItemDuration(project, sceneKey) : length;
   const lengthWarn = clip ? length < copy.min || length > copy.max : false;
 
   const seek = (seconds: number): void => {
@@ -1190,7 +1272,7 @@ export const TrimStep = ({
     const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
     if (!drag || !bounds || bounds.width <= 0 || event.buttons !== 1) return;
     const delta = ((event.clientX - drag.pointer) / bounds.width) * duration;
-    const next = movedTrimRange(drag, delta, duration, Math.max(frame, 0.05));
+    const next = movedTrimRange(drag, delta, duration);
     setRange({ in: next.in, out: next.out });
     seek(next.playhead);
   };
@@ -1234,7 +1316,6 @@ export const TrimStep = ({
         });
         loop.clipId = id;
         clampAimAppear(current, sceneKey, range.out - range.in);
-        if (current.timelineEdited) return current;
         return applySceneCutDuration(current, sceneKey, range.out - range.in);
       });
       return;
@@ -1246,18 +1327,17 @@ export const TrimStep = ({
       target.in = range.in;
       target.out = range.out;
       clampAimAppear(current, sceneKey, target.out - target.in);
-      if (current.timelineEdited) return current;
       return applySceneCutDuration(current, sceneKey, target.out - target.in);
     });
   };
 
   const cutToSeconds = (raw: number): void => {
-    if (loopLead) {
-      if (!Number.isFinite(raw)) return;
-      update((current) => applySceneCutDuration(current, 'loop', raw));
+    if (!Number.isFinite(raw)) return;
+    if (sceneKey === 'card' || loopLead) {
+      update((current) => applySceneCutDuration(current, sceneKey, raw));
       return;
     }
-    if (!clip || !Number.isFinite(raw)) return;
+    if (!clip) return;
     const media = Math.max(0.1, asset?.meta.duration ?? clip.out);
     const span = Math.min(clampSceneDuration(sceneKey, raw), media);
     const range = rangeForSceneDuration(clip.in, span, media);
@@ -1271,7 +1351,26 @@ export const TrimStep = ({
     });
   };
 
-  const savedDefault = savedDefaults[sceneKey] ?? builtinSceneDuration(sceneKey, project.templateId);
+  const applyWindow = (range: { in: number; out: number }, playAt: number): void => {
+    setRange(range);
+    seek(playAt);
+  };
+
+  const slideIn = (nextIn: number): void => {
+    if (!clip || !Number.isFinite(nextIn)) return;
+    const media = Math.max(0.1, duration);
+    const range = rangeForSceneDuration(nextIn, clip.out - clip.in, media);
+    applyWindow(range, range.in);
+  };
+
+  const slideOut = (nextOut: number): void => {
+    if (!clip || !Number.isFinite(nextOut)) return;
+    const media = Math.max(0.1, duration);
+    const range = rangeForSceneDurationFromOut(nextOut, clip.out - clip.in, media);
+    applyWindow(range, range.out);
+  };
+
+  const savedDefault = savedDefaults[sceneKey] ?? builtinSceneDuration(sceneKey);
   const durationLimits = sceneDurationLimits(sceneKey);
 
   const goNextScene = (): void => {
@@ -1282,10 +1381,6 @@ export const TrimStep = ({
   };
 
   const confirm = (): void => {
-    if (project.timelineEdited) {
-      setAskTimeline(true);
-      return;
-    }
     goNextScene();
   };
 
@@ -1293,13 +1388,28 @@ export const TrimStep = ({
     handlesRef.current = {
       setIn: () => {
         if (!clip) return;
-        setRange({ in: Math.min(playhead, clip.out - frame), out: clip.out });
+        slideIn(playhead);
       },
       setOut: () => {
         if (!clip) return;
-        setRange({ in: clip.in, out: Math.max(playhead, clip.in + frame) });
+        slideOut(playhead);
       },
       confirm,
+      nudgeCrop:
+        scene?.layout916 === 'focus'
+          ? (axis, delta) => {
+              update((current) => {
+                const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                if (!target) return current;
+                if (axis === 'y') {
+                  target.cropCenterY = Math.min(1, Math.max(0, focusCropCenterYOf(target) + delta));
+                } else {
+                  target.cropCenterX = Math.min(1, Math.max(0, target.cropCenterX + delta));
+                }
+                return current;
+              });
+            }
+          : null,
     };
     return () => {
       handlesRef.current = null;
@@ -1316,15 +1426,24 @@ export const TrimStep = ({
 
   useEffect(() => {
     if (secondsFocus.current) return;
-    setSecondsDraft(length > 0 ? length.toFixed(1) : savedDefault.toFixed(1));
-  }, [sceneKey, clip?.id, length, savedDefault]);
+    setSecondsDraft(
+      sceneKey === 'card' || length > 0 ? sceneLength.toFixed(1) : savedDefault.toFixed(1),
+    );
+  }, [sceneKey, clip?.id, sceneLength, length, savedDefault]);
 
   const cropW = (9 / 16) / (16 / 9);
   const cropLeft = Math.min(1 - cropW, Math.max(0, (scene?.cropCenterX ?? 0.5) - cropW / 2));
+  const sourceSize = focusFrameOf(asset?.meta.width, asset?.meta.height);
+  const focusWindow = scene?.layout916 === 'focus' ? resolveFocusCrop(sourceSize, scene.cropCenterX, scene.cropZoom, scene.cropCenterY) : null;
+  const shownCropLeft = focusWindow ? focusWindow.x / sourceSize.w : cropLeft;
+  const shownCropW = focusWindow ? focusWindow.w / sourceSize.w : cropW;
+  const shownCropTop = focusWindow ? focusWindow.y / sourceSize.h : 0;
+  const shownCropH = focusWindow ? focusWindow.h / sourceSize.h : 1;
+  const showCrop = scene?.layout916 === 'center-crop' || scene?.layout916 === 'focus';
   const previewWidth = PREVIEW_BASE_WIDTH * previewScale;
   const frameSpan = scene?.layout916 === 'center-crop' ? previewWidth * cropW : previewWidth;
   const ringScale = frameSpan / ANNOTATION_FRAME_WIDTH;
-  const cropDrag = useRef<{ pointer: number; center: number; moved: boolean } | null>(null);
+  const cropDrag = useRef<{ pointerX: number; pointerY: number; centerX: number; centerY: number; moved: boolean } | null>(null);
   const rangeDrag = useRef<{
     kind: 'move' | 'in' | 'out';
     pointer: number;
@@ -1335,6 +1454,19 @@ export const TrimStep = ({
   const nextKey = tabs[tabs.indexOf(sceneKey as (typeof tabs)[number]) + 1];
   const nextCode = nextKey ? sceneGuideCopy(project, nextKey).title.split(' ')[0] : '';
   const timelineItems = activeTimeline(project).items;
+  const focusWarning =
+    scene?.layout916 === 'focus'
+      ? focusOutsideDetail(
+          sourceSize,
+          scene.cropCenterX,
+          sceneFocusEffects(
+            scene,
+            timelineItems.find((item) => item.sceneKey === sceneKey)?.arrow ?? null,
+          ),
+          scene.cropZoom,
+          scene.cropCenterY,
+        )
+      : null;
 
   const placeMarker = (bounds: DOMRect, clientX: number, clientY: number): void => {
     if (!scene?.aimMarker?.enabled || bounds.width <= 0 || bounds.height <= 0) return;
@@ -1391,14 +1523,19 @@ export const TrimStep = ({
       : 'S7 は S1 の開始直前を使います。先に S1 の範囲を決めてください。';
 
   const tabState = (key: SceneKey): { tone: string; status: string } => {
-    if (key === 'card') return { tone: 'is-auto', status: '自動' };
+    if (key === 'card') {
+      const seconds = sceneItemDuration(project, 'card');
+      return key === sceneKey
+        ? { tone: 'is-on', status: '編集中' }
+        : { tone: 'is-set', status: `${seconds.toFixed(1)}s` };
+    }
     if (key === sceneKey) return { tone: 'is-on', status: '編集中' };
     if (key === 'loop' && !sceneHasRange(project, 'loop')) {
       return defaultLoopRange(project)
         ? { tone: 'is-auto', status: 'S1の直前' }
         : { tone: 'is-empty', status: 'S1と同じ' };
     }
-    if (key === 'demo' && project.templateId !== 't-guide' && !sceneHasRange(project, 'demo')) {
+    if (key === 'demo' && !sceneHasRange(project, 'demo')) {
       return { tone: 'is-auto', status: '任意' };
     }
     if (sceneHasRange(project, key)) {
@@ -1433,23 +1570,8 @@ export const TrimStep = ({
           <span className="gd-kicker">STEP 3 / 10</span>
           <h1>切り抜き</h1>
         </div>
-        <p>シーンごとに範囲を決めます。秒数を入れるとその長さで切り抜き、I／O でも範囲を動かせます。Enter で確定して次のシーンへ</p>
+        <p>シーンごとに範囲を決めます。尺を変えると長さが変わり、IN／OUT は同じ尺のまま動きます。I／O か数値のクリックでも動かせます。Enter で確定して次のシーンへ</p>
       </header>
-      {project.timelineEdited && (
-        <div className="gd-banner is-warn">
-          <span>詳細編集でタイムラインを変更しています。この手順の変更の一部はタイムラインに反映されません。</span>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('テンプレートから組み直します。タイムライン上の手編集は消えます。')) {
-                update((current) => ({ ...current, timelineEdited: false, timeline: null }));
-              }
-            }}
-          >
-            テンプレートから組み直す
-          </button>
-        </div>
-      )}
       <div className="gd-scene-tabs" role="tablist" aria-label="シーン">
         {trimScenes(project).map((key) => {
           const info = sceneGuideCopy(project, key);
@@ -1460,7 +1582,6 @@ export const TrimStep = ({
               type="button"
               role="tab"
               aria-selected={key === sceneKey}
-              disabled={key === 'card'}
               className={state.tone}
               onClick={() => onSceneKey(key)}
             >
@@ -1470,20 +1591,85 @@ export const TrimStep = ({
           );
         })}
       </div>
-      {!clip || !asset || !scene ? (
+      {sceneKey === 'card' ? (
+        <>
+          <div className="gd-trim-info">
+            <span className="gd-trim-badge">{copy.title}</span>
+            <p>
+              {copy.body}。目安 <strong>{copy.target.toFixed(1)}秒</strong>（{copy.min}〜{copy.max}秒）
+            </p>
+          </div>
+          <div className="gd-trim-seconds-row">
+            <label className="gd-trim-seconds">
+              表示秒数
+              <input
+                type="number"
+                min={durationLimits.min}
+                max={durationLimits.max}
+                step={0.1}
+                value={secondsDraft}
+                aria-label={`${copy.title}の表示秒数`}
+                onFocus={() => {
+                  secondsFocus.current = true;
+                }}
+                onChange={(event) => setSecondsDraft(event.target.value)}
+                onBlur={() => {
+                  secondsFocus.current = false;
+                  const next = Number(secondsDraft);
+                  if (!Number.isFinite(next)) {
+                    setSecondsDraft(sceneLength.toFixed(1));
+                    return;
+                  }
+                  cutToSeconds(next);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                }}
+              />
+            </label>
+            <button type="button" className="gd-trim-default" onClick={() => cutToSeconds(savedDefault)}>
+              デフォルト {savedDefault.toFixed(1)}秒にする
+            </button>
+            <button
+              type="button"
+              className="gd-trim-default"
+              onClick={() => {
+                const next = Number(secondsDraft);
+                if (!Number.isFinite(next)) return;
+                const seconds = clampSceneDuration(sceneKey, next);
+                cutToSeconds(seconds);
+                void window.studio
+                  .setSceneDurationDefault(sceneKey, seconds)
+                  .then(setSavedDefaults)
+                  .catch((error: unknown) => {
+                    useStudioStore.getState().setError(error instanceof Error ? error.message : String(error));
+                  });
+              }}
+            >
+              この秒数をデフォルトにする
+            </button>
+            <span className="gd-trim-src">保存済み {savedDefault.toFixed(1)}秒</span>
+          </div>
+          <div className="gd-trim-controls">
+            <button type="button" className="gd-confirm-scene" onClick={confirm}>
+              {nextCode ? `確定して ${nextCode} へ（Enter）` : '確定（Enter）'}
+            </button>
+          </div>
+        </>
+      ) : !clip || !asset || !scene ? (
         <div
-          className={
-            sceneKey === 'demo' && project.templateId !== 't-guide' ? 'gd-banner is-ok' : 'gd-banner is-warn'
-          }
+          className={sceneKey === 'demo' ? 'gd-banner is-ok' : 'gd-banner is-warn'}
         >
           <span>
             {sceneKey === 'loop'
               ? loopEmptyCopy
-              : sceneKey === 'demo' && project.templateId !== 't-guide'
+              : sceneKey === 'demo'
                 ? 'S6 は任意です。実戦の映像がなければ、このシーンを入れずに進められます。'
                 : 'このシーンの元動画がありません。手順2で録画を追加してください。'}
           </span>
-          {(sceneKey === 'loop' || (sceneKey === 'demo' && project.templateId !== 't-guide')) && emptyAsset && (
+          {(sceneKey === 'loop' || sceneKey === 'demo') && emptyAsset && (
             <>
               {videoChoice(emptyAsset.id, setEmptyPick)}
               <button
@@ -1521,7 +1707,7 @@ export const TrimStep = ({
                 終了 {loopLead.out.toFixed(2)}秒。S1 の開始より 0.01 秒前です
               </span>
             )}
-            {sceneKey === 'demo' && project.templateId !== 't-guide' && (
+            {sceneKey === 'demo' && (
               <button type="button" className="gd-loop-revert" onClick={() => update(omitDemoScene)}>
                 S6 を入れない
               </button>
@@ -1545,7 +1731,7 @@ export const TrimStep = ({
                   secondsFocus.current = false;
                   const next = Number(secondsDraft);
                   if (!Number.isFinite(next)) {
-                    setSecondsDraft(length > 0 ? length.toFixed(1) : savedDefault.toFixed(1));
+                    setSecondsDraft(sceneLength > 0 ? sceneLength.toFixed(1) : savedDefault.toFixed(1));
                     return;
                   }
                   cutToSeconds(next);
@@ -1606,7 +1792,21 @@ export const TrimStep = ({
               style={{ width: `${Math.round(PREVIEW_BASE_WIDTH * previewScale)}px` }}
               onPointerUp={(event) => {
                 if (event.target !== event.currentTarget && !(event.target instanceof HTMLVideoElement)) return;
-                placeMarker(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
+                const bounds = event.currentTarget.getBoundingClientRect();
+                if (scene.layout916 === 'focus') {
+                  if (bounds.width <= 0 || bounds.height <= 0) return;
+                  const nextX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+                  const nextY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
+                  update((current) => {
+                    const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                    if (!target) return current;
+                    target.cropCenterX = nextX;
+                    target.cropCenterY = nextY;
+                    return current;
+                  });
+                  return;
+                }
+                placeMarker(bounds, event.clientX, event.clientY);
               }}
             >
               <video
@@ -1615,28 +1815,71 @@ export const TrimStep = ({
                 src={mediaUrl(asset.proxyPath ?? asset.path)}
                 onTimeUpdate={(event) => setPlayhead(event.currentTarget.currentTime)}
               />
-              {scene.layout916 === 'center-crop' && (
+              {showCrop && (
                 <>
-                  <div className="gd-crop-shade" style={{ left: 0, width: `${cropLeft * 100}%` }} />
-                  <div className="gd-crop-shade" style={{ left: `${(cropLeft + cropW) * 100}%`, right: 0 }} />
+                  <div className="gd-crop-shade" style={{ left: 0, width: `${shownCropLeft * 100}%` }} />
+                  <div className="gd-crop-shade" style={{ left: `${(shownCropLeft + shownCropW) * 100}%`, right: 0 }} />
+                  {focusWindow && shownCropTop > 0.001 && (
+                    <div
+                      className="gd-crop-shade"
+                      style={{
+                        left: `${shownCropLeft * 100}%`,
+                        width: `${shownCropW * 100}%`,
+                        top: 0,
+                        height: `${shownCropTop * 100}%`,
+                        bottom: 'auto',
+                      }}
+                    />
+                  )}
+                  {focusWindow && shownCropTop + shownCropH < 0.999 && (
+                    <div
+                      className="gd-crop-shade"
+                      style={{
+                        left: `${shownCropLeft * 100}%`,
+                        width: `${shownCropW * 100}%`,
+                        top: `${(shownCropTop + shownCropH) * 100}%`,
+                        bottom: 0,
+                      }}
+                    />
+                  )}
                   <div
                     className="gd-crop"
-                    style={{ left: `${cropLeft * 100}%`, width: `${cropW * 100}%` }}
+                    style={{
+                      left: `${shownCropLeft * 100}%`,
+                      width: `${shownCropW * 100}%`,
+                      ...(focusWindow
+                        ? {
+                            top: `${shownCropTop * 100}%`,
+                            height: `${shownCropH * 100}%`,
+                            bottom: 'auto',
+                            cursor: 'move',
+                          }
+                        : {}),
+                    }}
                     onPointerDown={(event) => {
                       event.stopPropagation();
                       event.currentTarget.setPointerCapture(event.pointerId);
-                      cropDrag.current = { pointer: event.clientX, center: scene.cropCenterX, moved: false };
+                      cropDrag.current = {
+                        pointerX: event.clientX,
+                        pointerY: event.clientY,
+                        centerX: scene.cropCenterX,
+                        centerY: focusCropCenterYOf(scene),
+                        moved: false,
+                      };
                     }}
                     onPointerMove={(event) => {
                       const drag = cropDrag.current;
                       const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
-                      if (!drag || !bounds || bounds.width <= 0) return;
-                      if (Math.abs(event.clientX - drag.pointer) > 3) drag.moved = true;
+                      if (!drag || !bounds || bounds.width <= 0 || bounds.height <= 0) return;
+                      if (Math.hypot(event.clientX - drag.pointerX, event.clientY - drag.pointerY) > 3) drag.moved = true;
                       if (!drag.moved) return;
-                      const next = Math.min(1, Math.max(0, drag.center + (event.clientX - drag.pointer) / bounds.width));
+                      const nextX = Math.min(1, Math.max(0, drag.centerX + (event.clientX - drag.pointerX) / bounds.width));
+                      const nextY = Math.min(1, Math.max(0, drag.centerY + (event.clientY - drag.pointerY) / bounds.height));
                       update((current) => {
                         const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterX = next;
+                        if (!target) return current;
+                        target.cropCenterX = nextX;
+                        if (target.layout916 === 'focus') target.cropCenterY = nextY;
                         return current;
                       });
                     }}
@@ -1645,10 +1888,27 @@ export const TrimStep = ({
                       cropDrag.current = null;
                       event.stopPropagation();
                       const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
-                      if (drag && !drag.moved && bounds) placeMarker(bounds, event.clientX, event.clientY);
+                      if (drag && !drag.moved && bounds) {
+                        if (scene.layout916 === 'focus') {
+                          const nextX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+                          const nextY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
+                          update((current) => {
+                            const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                            if (!target) return current;
+                            target.cropCenterX = nextX;
+                            target.cropCenterY = nextY;
+                            return current;
+                          });
+                        } else {
+                          placeMarker(bounds, event.clientX, event.clientY);
+                        }
+                      }
                     }}
                   >
-                    <span>縦型に切り抜く範囲（9:16）</span>
+                    <span>{scene.layout916 === 'focus' ? '切り抜く範囲（1080:1430）' : '縦型に切り抜く範囲（9:16）'}</span>
+                    {scene.layout916 === 'focus' && (
+                      <i className="gd-crop-axis" style={{ background: project.templateParams.accent }} />
+                    )}
                   </div>
                 </>
               )}
@@ -1727,6 +1987,7 @@ export const TrimStep = ({
               </span>
             </div>
           </div>
+          {focusWarning && <p className="gd-banner is-warn">{focusWarning}（警告。止めない）</p>}
           <div className="gd-trim-ruler">
             <div className="gd-trim-range" aria-label="範囲の指定">
               {sceneKey === 'hook' && duration > 0 && asset && (() => {
@@ -1782,7 +2043,7 @@ export const TrimStep = ({
                   <button
                     type="button"
                     className="is-handle"
-                    aria-label="開始位置。ドラッグで伸縮"
+                    aria-label="開始位置。ドラッグで尺を保ったまま移動"
                     style={{ left: `${(clip.in / duration) * 100}%` }}
                     onPointerDown={(event) => beginRangeDrag('in', event)}
                     onPointerMove={moveRangeDrag}
@@ -1792,7 +2053,7 @@ export const TrimStep = ({
                   <button
                     type="button"
                     className="is-handle"
-                    aria-label="終了位置。ドラッグで伸縮"
+                    aria-label="終了位置。ドラッグで尺を保ったまま移動"
                     style={{ left: `${(clip.out / duration) * 100}%` }}
                     onPointerDown={(event) => beginRangeDrag('out', event)}
                     onPointerMove={moveRangeDrag}
@@ -1817,27 +2078,41 @@ export const TrimStep = ({
             </div>
           </div>
           <div className="gd-trim-controls">
-            <button
-              type="button"
-              className="gd-io"
-              onClick={() => setRange({ in: Math.min(playhead, clip.out - frame), out: clip.out })}
-            >
-              <kbd>I</kbd>IN {frameStamp(clip.in)}
-            </button>
-            <button
-              type="button"
-              className="gd-io"
-              onClick={() => setRange({ in: clip.in, out: Math.max(playhead, clip.in + frame) })}
-            >
-              <kbd>O</kbd>OUT {frameStamp(clip.out)}
-            </button>
-            <span className={lengthWarn ? 'gd-trim-length is-warn' : 'gd-trim-length'}>
+            <TrimTimeField
+              label="IN"
+              kbd="I"
+              value={clip.in}
+              min={0}
+              max={Math.max(0, duration - length)}
+              step={0.1}
+              onChange={slideIn}
+              onCommitFromPlayhead={() => slideIn(playhead)}
+            />
+            <TrimTimeField
+              label="OUT"
+              kbd="O"
+              value={clip.out}
+              min={length}
+              max={duration}
+              step={0.1}
+              onChange={slideOut}
+              onCommitFromPlayhead={() => slideOut(playhead)}
+            />
+            <div className={lengthWarn ? 'gd-trim-length is-warn' : 'gd-trim-length'}>
+              <TrimTimeField
+                label="長さ（秒）"
+                value={length}
+                min={durationLimits.min}
+                max={Math.min(durationLimits.max, duration)}
+                step={0.1}
+                onChange={cutToSeconds}
+              />
               {length < copy.min
-                ? `長さ ${length.toFixed(2)}秒（目安より短い）`
+                ? '目安より短い'
                 : length > copy.max
-                  ? `長さ ${length.toFixed(2)}秒（目安より長い）`
-                  : `長さ ${length.toFixed(2)}秒`}
-            </span>
+                  ? '目安より長い'
+                  : null}
+            </div>
             <span className="gd-spacer" />
             <button type="button" className="gd-nudge" aria-label="1フレーム戻る" onClick={() => seek(Math.max(0, playhead - frame))}>
               ‹
@@ -1859,6 +2134,7 @@ export const TrimStep = ({
                   [
                     ['center-crop', '中央切り抜き'],
                     ['blur-fit', 'ぼかし背景'],
+                    ['focus', 'フォーカス'],
                     ['split', '上下分割'],
                   ] as const
                 ).map(([layout, text]) => (
@@ -1872,6 +2148,11 @@ export const TrimStep = ({
                         if (!target) return current;
                         target.layout916 = layout;
                         if (layout === 'center-crop') target.cropCenterX = 0.5;
+                        if (current.timeline) {
+                          current.timeline.items = current.timeline.items.map((item) =>
+                            item.sceneKey === sceneKey ? { ...item, layout } : item,
+                          );
+                        }
                         return current;
                       })
                     }
@@ -1880,6 +2161,123 @@ export const TrimStep = ({
                   </button>
                 ))}
               </div>
+              {scene.layout916 === 'focus' && (
+                <label className="gd-focus-center">
+                  切り抜きの横位置
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    aria-label="切り抜きの横位置"
+                    value={scene.cropCenterX}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterX = next;
+                        return current;
+                      });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    aria-label="切り抜きの横位置の数値"
+                    value={Number(scene.cropCenterX.toFixed(2))}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (!Number.isFinite(next)) return;
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterX = Math.min(1, Math.max(0, next));
+                        return current;
+                      });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterX = 0.5;
+                        return current;
+                      })
+                    }
+                  >
+                    中央に戻す
+                  </button>
+                </label>
+              )}
+              {scene.layout916 === 'focus' && (
+                <label className="gd-focus-center">
+                  切り抜きの縦位置
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    aria-label="切り抜きの縦位置"
+                    value={focusCropCenterYOf(scene)}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterY = next;
+                        return current;
+                      });
+                    }}
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    aria-label="切り抜きの縦位置の数値"
+                    value={Number(focusCropCenterYOf(scene).toFixed(2))}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      if (!Number.isFinite(next)) return;
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterY = Math.min(1, Math.max(0, next));
+                        return current;
+                      });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      update((current) => {
+                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                        if (target) target.cropCenterY = 0.5;
+                        return current;
+                      })
+                    }
+                  >
+                    中央に戻す
+                  </button>
+                </label>
+              )}
+              {scene.layout916 === 'focus' && (
+                <TrimTimeField
+                  label="拡大率"
+                  value={focusCropZoomOf(scene)}
+                  min={FOCUS_CROP_ZOOM.min}
+                  max={FOCUS_CROP_ZOOM.max}
+                  step={FOCUS_CROP_ZOOM.step}
+                  onChange={(next) => {
+                    const cropZoom = roundFocusZoom(next);
+                    update((current) => {
+                      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                      if (target) target.cropZoom = cropZoom;
+                      return current;
+                    });
+                  }}
+                />
+              )}
               <label>
                 <input
                   type="checkbox"
@@ -1973,8 +2371,10 @@ export const TrimStep = ({
             </div>
             {scene.aimMarker?.enabled && (
               <div className="gd-marker-controls">
-                <MarkerAxisControl axis="x" value={scene.aimMarker.x} onChange={(value) => setMarkerAxis('x', value)} />
-                <MarkerAxisControl axis="y" value={scene.aimMarker.y} onChange={(value) => setMarkerAxis('y', value)} />
+                <div className="gd-marker-axes">
+                  <MarkerAxisControl axis="x" value={scene.aimMarker.x} onChange={(value) => setMarkerAxis('x', value)} />
+                  <MarkerAxisControl axis="y" value={scene.aimMarker.y} onChange={(value) => setMarkerAxis('y', value)} />
+                </div>
                 <label className="is-when">
                   出現
                   <span className="gd-freeze-read">
@@ -1993,9 +2393,6 @@ export const TrimStep = ({
                     </button>
                   </span>
                 </label>
-                <span className="gd-muted">
-                  切り抜き開始からこの秒で出し、シーンの終わりまで残します。出現前のリングは薄くなります。位置はクリック、ドラッグ、スライダー、またはX/Yのピクセル数値（左上から、Xは0〜1080、Yは0〜1920）で指定
-                </span>
                 <AnnotationWeightField
                   style={project.annotationStyle}
                   onChange={(style: AnnotationStyle) =>
@@ -2150,37 +2547,6 @@ export const TrimStep = ({
             )}
           </section>
         </>
-      )}
-      {askTimeline && (
-        <div className="confirm-backdrop" onClick={() => setAskTimeline(false)}>
-          <div className="confirm-dialog" role="dialog" onClick={(event) => event.stopPropagation()}>
-            <h2>タイムラインの範囲も書き換えますか？</h2>
-            <p>詳細編集済みのタイムラインにある、このシーンの長さと切り抜き方法を、今の範囲に合わせます。</p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setAskTimeline(false)}>キャンセル</button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAskTimeline(false);
-                  goNextScene();
-                }}
-              >
-                書き換えない
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  update((current) => rewriteSceneRange(current, sceneKey));
-                  setAskTimeline(false);
-                  goNextScene();
-                }}
-              >
-                書き換える
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
@@ -2740,6 +3106,7 @@ const CardFramePicker = ({
   busy,
   onCapture,
   onClose,
+  heading,
 }: {
   project: Project;
   role: CardStillRole;
@@ -2748,6 +3115,7 @@ const CardFramePicker = ({
   busy: boolean;
   onCapture: (assetId: string, seconds: number) => Promise<boolean>;
   onClose: () => void;
+  heading?: string;
 }) => {
   const videos = videosOf(project);
   const initialAsset = videos.find((item) => item.id === initialAssetId) ?? videos[0];
@@ -2789,8 +3157,8 @@ const CardFramePicker = ({
       >
         <header className="clip-editor-heading">
           <div>
-            <span className="eyebrow">CARD FRAME · {role.toUpperCase()}</span>
-            <h2 id="card-frame-picker-title">{CARD_FRAME_ROLE_LABEL[role]}の画像を選ぶ</h2>
+            <span className="eyebrow">{heading ? 'THUMBNAIL' : `CARD FRAME · ${role.toUpperCase()}`}</span>
+            <h2 id="card-frame-picker-title">{heading ?? `${CARD_FRAME_ROLE_LABEL[role]}の画像を選ぶ`}</h2>
             <p className="clip-editor-hint">
               登録済みのどの動画からでも、現在位置のフレームをカード用画像にできます。
             </p>
@@ -2891,6 +3259,261 @@ const CardFramePicker = ({
   );
 };
 
+const writeThumbnail = (recipe: (thumb: NonNullable<Project['thumbnail']>) => void): void => {
+  update((current) => {
+    const thumb: NonNullable<Project['thumbnail']> = {
+      layout: current.thumbnail?.layout ?? 'classic',
+      ...(current.thumbnail?.frame ? { frame: { ...current.thumbnail.frame } } : {}),
+      ...(current.thumbnail?.focus ? { focus: { ...current.thumbnail.focus } } : {}),
+      ...(current.thumbnail?.zoom !== undefined ? { zoom: current.thumbnail.zoom } : {}),
+    };
+    recipe(thumb);
+    current.thumbnail = thumb;
+    return current;
+  });
+};
+
+const ThumbSetup = ({
+  project,
+  onPickFrame,
+}: {
+  project: Project;
+  onPickFrame: () => void;
+}) => {
+  const focusOn = thumbnailLayoutOf(project) === 'focus';
+  const pick = resolveFocusFrame(project);
+  const asset = pick ? project.assets.find((item) => item.id === pick.assetId) : undefined;
+  const size = focusFrameSize(project);
+  const focus = thumbnailFocusOf(project);
+  const zoom = thumbnailZoomOf(project);
+  const crop = size ? resolveThumbCrop(size, focus, zoom) : null;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const drag = useRef<{ x: number; y: number; focus: { x: number; y: number }; moved: boolean } | null>(null);
+  const [surface, setSurface] = useState<ThumbSurface>('full');
+  const [actualSize, setActualSize] = useState(false);
+  const [previewLanguage, setPreviewLanguage] = useState<Language>('ja');
+  const candidates = cardCandidates(project).result;
+  const upscale = focusUpscale(project);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !pick) return;
+    const seek = (): void => {
+      if (Math.abs(video.currentTime - pick.timeSec) > 0.04) video.currentTime = pick.timeSec;
+    };
+    if (video.readyState >= 1) seek();
+    else video.addEventListener('loadedmetadata', seek, { once: true });
+  }, [pick?.assetId, pick?.timeSec]);
+
+  const pointFromEvent = (event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } | null => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+  };
+
+  return (
+    <section className="gd-still-card gd-thumb-setup">
+      <div className="gd-still-head">
+        <span className="gd-still-num">04</span>
+        <strong>サムネイル</strong>
+        {focusOn && pick?.source === 'result' ? <span className="gd-still-ok">03に追従</span> : null}
+        {focusOn && pick?.source === 'custom' ? <span className="gd-still-ok">フレーム指定</span> : null}
+      </div>
+      <ThumbnailLayoutSwitch project={project} />
+      <div className="gd-thumb-split">
+        <div
+          ref={boxRef}
+          className={`gd-thumb-source ${focusOn ? '' : 'is-off'}`}
+          style={size ? { aspectRatio: `${size.w} / ${size.h}` } : undefined}
+          tabIndex={focusOn ? 0 : -1}
+          role="application"
+          aria-label="サムネイルの中心"
+          aria-disabled={!focusOn}
+          onPointerDown={(event) => {
+            if (!focusOn || event.button !== 0) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            drag.current = { x: event.clientX, y: event.clientY, focus, moved: false };
+          }}
+          onPointerMove={(event) => {
+            const state = drag.current;
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (!state || !focusOn || rect.width <= 0 || rect.height <= 0) return;
+            const dx = event.clientX - state.x;
+            const dy = event.clientY - state.y;
+            if (!state.moved && Math.hypot(dx, dy) < 4) return;
+            state.moved = true;
+            writeThumbnail((thumb) => {
+              thumb.focus = {
+                x: Math.min(1, Math.max(0, state.focus.x + dx / rect.width)),
+                y: Math.min(1, Math.max(0, state.focus.y + dy / rect.height)),
+              };
+            });
+          }}
+          onPointerUp={(event) => {
+            const state = drag.current;
+            drag.current = null;
+            if (!state || state.moved || !focusOn) return;
+            const point = pointFromEvent(event);
+            if (!point) return;
+            writeThumbnail((thumb) => {
+              thumb.focus = point;
+            });
+          }}
+          onKeyDown={(event) => {
+            if (!focusOn) return;
+            const rect = boxRef.current?.getBoundingClientRect();
+            if (!rect || rect.width <= 0 || rect.height <= 0) return;
+            const delta = event.shiftKey ? 10 : 1;
+            const stepX = delta / rect.width;
+            const stepY = delta / rect.height;
+            const move = { x: 0, y: 0 };
+            if (event.key === 'ArrowLeft') move.x = -stepX;
+            else if (event.key === 'ArrowRight') move.x = stepX;
+            else if (event.key === 'ArrowUp') move.y = -stepY;
+            else if (event.key === 'ArrowDown') move.y = stepY;
+            else return;
+            event.preventDefault();
+            writeThumbnail((thumb) => {
+              const current = thumb.focus ?? focus;
+              thumb.focus = {
+                x: Math.min(1, Math.max(0, current.x + move.x)),
+                y: Math.min(1, Math.max(0, current.y + move.y)),
+              };
+            });
+          }}
+        >
+          {asset?.type === 'image' ? (
+            <img src={mediaUrl(asset.path)} alt="" />
+          ) : asset?.type === 'video' ? (
+            <video
+              key={`${asset.id}-${pick?.timeSec ?? 0}`}
+              ref={videoRef}
+              src={mediaUrl(asset.proxyPath ?? asset.path)}
+              muted
+              playsInline
+              preload="auto"
+            />
+          ) : (
+            <span className="gd-still-note">フレームがありません</span>
+          )}
+          {crop && size ? (
+            <div
+              className="gd-thumb-crop"
+              style={{
+                left: `${(crop.x / size.w) * 100}%`,
+                top: `${(crop.y / size.h) * 100}%`,
+                width: `${(crop.w / size.w) * 100}%`,
+                height: `${(crop.h / size.h) * 100}%`,
+              }}
+            />
+          ) : null}
+        </div>
+        <div>
+          <div className="thumb-layout-switch">
+            <button type="button" className={previewLanguage === 'ja' ? 'is-on' : ''} onClick={() => setPreviewLanguage('ja')}>日本語</button>
+            <button type="button" className={previewLanguage === 'en' ? 'is-on' : ''} onClick={() => setPreviewLanguage('en')}>English</button>
+          </div>
+        <ThumbnailStage
+          project={project}
+          language={previewLanguage}
+          fps={project.templateParams.fps}
+          surface={surface}
+          onSurface={setSurface}
+          actualSize={actualSize}
+          onActualSize={setActualSize}
+          showControls
+        />
+        </div>
+      </div>
+      <span className="gd-still-note">
+        クリックかドラッグで中心を動かします。矢印キーは1px、Shiftと一緒で10pxです。設定しなくても手順は完了できます。
+      </span>
+      <span className="gd-still-kicker">候補</span>
+      <div className="gd-still-row">
+        {candidates.map((candidate) => {
+          const on = Boolean(
+            pick &&
+            candidate.assetId === pick.assetId &&
+            Math.abs(candidate.seconds - pick.timeSec) < 0.08,
+          );
+          const preview = project.stills.find(
+            (still) => still.assetId === candidate.assetId && Math.abs(still.frame - candidate.seconds) < 0.08,
+          );
+          const buttonLabel = CANDIDATE_LABEL.result[candidate.label]?.button ?? candidate.label;
+          return (
+            <button
+              key={`${candidate.assetId}-${candidate.label}-${candidate.seconds}`}
+              type="button"
+              className={on ? 'is-on' : ''}
+              disabled={!focusOn}
+              onClick={() =>
+                writeThumbnail((thumb) => {
+                  thumb.layout = 'focus';
+                  thumb.frame = { assetId: candidate.assetId, timeSec: candidate.seconds };
+                })
+              }
+            >
+              <span
+                className="gd-still-thumb"
+                style={preview ? { backgroundImage: `url(${mediaUrl(preview.path)})` } : undefined}
+              />
+              <span>{buttonLabel}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="gd-thumb-tools">
+        <button type="button" disabled={!focusOn} onClick={onPickFrame}>
+          フレームを選ぶ
+        </button>
+        <button
+          type="button"
+          disabled={!focusOn || !project.thumbnail?.frame}
+          onClick={() =>
+            writeThumbnail((thumb) => {
+              delete thumb.frame;
+            })
+          }
+        >
+          03に合わせる
+        </button>
+        <button
+          type="button"
+          disabled={!focusOn}
+          onClick={() =>
+            writeThumbnail((thumb) => {
+              thumb.focus = { x: 0.5, y: 0.5 };
+            })
+          }
+        >
+          中央に戻す
+        </button>
+        <TrimTimeField
+          label="拡大率"
+          value={zoom}
+          min={THUMB_FOCUS.zoom.min}
+          max={THUMB_FOCUS.zoom.max}
+          step={THUMB_FOCUS.zoom.step}
+          disabled={!focusOn}
+          onChange={(next) => {
+            const rounded = Math.min(THUMB_FOCUS.zoom.max, Math.max(THUMB_FOCUS.zoom.min, Number(next.toFixed(2))));
+            writeThumbnail((thumb) => {
+              thumb.zoom = rounded;
+            });
+          }}
+        />
+      </div>
+      {focusOn && upscale !== null && upscale > THUMB_FOCUS.zoom.warnUpscale ? (
+        <p className="gd-review-thumb-note">拡大が{upscale.toFixed(2)}倍です。1.60倍を超えると最終確認で警告します</p>
+      ) : null}
+    </section>
+  );
+};
+
 export const CardStep = ({
   project,
 }: {
@@ -2899,6 +3522,7 @@ export const CardStep = ({
   const candidates = cardCandidates(project);
   const videos = videosOf(project);
   const [pickerRole, setPickerRole] = useState<CardStillRole | null>(null);
+  const [thumbPicker, setThumbPicker] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
   const capture = async (assetId: string, role: CardStillRole, seconds: number): Promise<boolean> => {
@@ -2958,7 +3582,7 @@ export const CardStep = ({
       <StepHead
         step={4}
         title="カード用画像"
-        text="切り抜いたシーンの候補に加え、登録済みの別動画からも選べます。選んだ画像はドラッグかスライダーで切り抜き位置を上下左右にずらします"
+        text="登録済みの動画からフレームを選びます。切り抜き済みのシーンがあれば、その範囲も候補に出ます。選んだ画像はドラッグかスライダーで切り抜き位置を上下左右にずらします"
       />
       <div className="gd-card-grid">
         {(Object.keys(CARD_COPY) as Array<keyof typeof CARD_COPY>).map((role) => {
@@ -3028,6 +3652,29 @@ export const CardStep = ({
           );
         })}
       </div>
+      <ThumbSetup project={project} onPickFrame={() => setThumbPicker(true)} />
+      <section className="gd-layout-block">
+        <strong>動画での表示秒数（S5）</strong>
+        <div className="gd-trim-seconds-row">
+          <label className="gd-trim-seconds">
+            秒数
+            <input
+              type="number"
+              min={sceneDurationLimits('card').min}
+              max={sceneDurationLimits('card').max}
+              step={0.1}
+              value={Number(sceneItemDuration(project, 'card').toFixed(1))}
+              aria-label="S5カードの表示秒数"
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (!Number.isFinite(next)) return;
+                update((current) => applySceneCutDuration(current, 'card', next));
+              }}
+            />
+          </label>
+          <span className="gd-trim-src">初期値 {builtinSceneDuration('card').toFixed(1)}秒</span>
+        </div>
+      </section>
       <section className="gd-layout-block">
         <strong>カードのレイアウト</strong>
         <div className="gd-layouts">
@@ -3097,17 +3744,38 @@ export const CardStep = ({
           />
         );
       })()}
+      {thumbPicker && (() => {
+        const pick = resolveFocusFrame(project);
+        const fallback = candidates.result[0];
+        return (
+          <CardFramePicker
+            key={`thumb-${pick?.assetId ?? ''}-${pick?.timeSec ?? 0}`}
+            project={project}
+            role="result"
+            heading="サムネイルの画像を選ぶ"
+            initialAssetId={pick?.assetId ?? fallback?.assetId ?? videos[0]?.id ?? ''}
+            initialSeconds={pick?.timeSec ?? fallback?.seconds ?? 0}
+            busy={false}
+            onCapture={async (assetId, seconds) => {
+              const timeSec = Math.round(Math.max(0, seconds) * 1000) / 1000;
+              writeThumbnail((thumb) => {
+                thumb.layout = 'focus';
+                thumb.frame = { assetId, timeSec };
+              });
+              return true;
+            }}
+            onClose={() => setThumbPicker(false)}
+          />
+        );
+      })()}
     </div>
   );
 };
-
-const VARIABLES = ['map', 'site', 'side', 'agent', 'ability', 'throwType', 'charge', 'bounce', 'br'];
 
 const CAPTION_ROWS = [
   ['hook', 'HOOK', 'フック · 最大3行'],
   ['stand', 'STAND', '立ち位置'],
   ['throw', 'AIM', '狙い（投げ方）'],
-  ['demo', '実戦', '実戦デモ'],
   ['cta', 'CTA', 'ループ'],
 ] as const;
 
@@ -3116,14 +3784,7 @@ export type CaptionPreviewTarget = CaptionPreviewId | 'card' | 'x' | 'thumb';
 
 const captionScene = (project: Project, id: (typeof CAPTION_ROWS)[number][0], hint: string): string => {
   if (id === 'cta') {
-    if (project.templateId === 't-guide') return 'CTA';
     return resolveCtaDesign(project) === 's4-block' ? 'S4 発動イメージ' : `S7 ${hint}`;
-  }
-  if (id === 'demo') return project.templateId === 't-guide' ? `G4 ${hint}` : `S6 ${hint}`;
-  if (project.templateId === 't-guide') {
-    if (id === 'hook') return `G1 ${hint}`;
-    if (id === 'stand') return 'G2 手順';
-    return 'G2 狙い（投げ方）';
   }
   if (id === 'hook') return `S1 ${hint}`;
   if (id === 'stand') return 'S2 立ち位置';
@@ -3177,13 +3838,6 @@ const fieldNote = (
     if (!text.trim()) return { text: '空にすると動画に出ません', warn: false };
     return { text: text.trim() === CTA_TEXT[language] ? '定型文から' : '手入力', warn: false };
   }
-  if (id === 'demo') {
-    const fromDefault = text === defaultDemoCaption().text[language];
-    return {
-      text: `${metrics.lines}行 · ${fromDefault ? '定型文から' : '手入力'}`,
-      warn: metrics.empty && language === 'en',
-    };
-  }
   if (id === 'hook') {
     const pattern = project.hookPattern;
     const fromPattern = pattern !== 'custom' && text === HOOK_PATTERNS[pattern][language];
@@ -3213,30 +3867,15 @@ export const CaptionStep = ({
   previewing: CaptionPreviewTarget;
   onPreview: (id: CaptionPreviewTarget, language?: Language) => void;
 }) => {
-  const focus = useRef<{ id: string; language: Language; field: 'text' | 'cardText' | 'xText' | 'thumbText' }>({
-    id: 'hook',
-    language: 'ja',
-    field: 'text',
-  });
   const [splitHook, setSplitHook] = useState(false);
-  const previous = project.guide.previousHookPattern;
-
-  const setPattern = (pattern: HookPattern): void => {
-    update((current) => {
-      current.hookPattern = pattern;
-      if (pattern !== 'custom') {
-        const hook = current.captions.find((caption) => caption.id === 'hook');
-        if (hook) hook.text = { ...HOOK_PATTERNS[pattern] };
-      }
-      return current;
-    });
-  };
+  const [editStandAim, setEditStandAim] = useState(false);
+  const [editCta, setEditCta] = useState(false);
 
   const ensureCaption = (current: Project, id: string): Caption | undefined => {
     const existing = current.captions.find((item) => item.id === id);
     if (existing) return existing;
-    const created = id === 'demo' ? defaultDemoCaption() : id === 'cta' ? defaultCtaCaption() : undefined;
-    if (!created) return undefined;
+    if (id !== 'cta') return undefined;
+    const created = defaultCtaCaption();
     current.captions.push(created);
     return created;
   };
@@ -3268,12 +3907,27 @@ export const CaptionStep = ({
 
   const writeCaption = (id: string, language: Language, value: string): void => {
     update((current) => {
-      const target = ensureCaption(current, id);
-      if (target) {
-        target.text[language] = value;
-        if (id === 'cta' && value.trim()) target.hidden = false;
+      const index = current.captions.findIndex((item) => item.id === id);
+      if (index < 0) {
+        const created = ensureCaption(current, id);
+        if (!created) return current;
+        created.text = { ...created.text, [language]: value };
+        if (id === 'cta' && value.trim()) created.hidden = false;
+        if (id === 'hook') current.hookPattern = 'custom';
+        return current;
       }
-      return current;
+      const target = current.captions[index];
+      if (!target) return current;
+      const next = {
+        ...target,
+        text: { ...target.text, [language]: value },
+        hidden: id === 'cta' && value.trim() ? false : target.hidden,
+      };
+      return {
+        ...current,
+        hookPattern: id === 'hook' ? 'custom' : current.hookPattern,
+        captions: current.captions.map((item, itemIndex) => (itemIndex === index ? next : item)),
+      };
     });
   };
 
@@ -3282,64 +3936,9 @@ export const CaptionStep = ({
       <StepHead
         step={5}
         title="テロップ"
-        text="フックの型を選ぶと文言の下書きが入ります。英語は初期で1枚4語までです。STAND・AIM は定点情報の説明から、実戦は定型文から入っています。CTAの定型文は2行で、[ ] の行が赤くなります。空にするとCTA文言は出ません"
+        text="特徴と雰囲気からフック・英語タイトル・固定コメントの案を出します。STAND・AIM は定点情報の定型、CTA は「高評価して見返す」のままです。変えたいときだけ開いてください"
       />
-      <section className="gd-hook-type">
-        <span className="gd-hook-type-title">
-          フックの型
-          {previous && (
-            <em>
-              前回：{HOOK_PATTERN_LABELS[previous]}。同じ型が続かないよう、今回は別の型をおすすめします
-            </em>
-          )}
-        </span>
-        <div className="gd-patterns" role="radiogroup" aria-label="フックの型">
-          {(Object.keys(HOOK_PATTERN_LABELS) as HookPattern[]).map((pattern) => (
-            <button
-              key={pattern}
-              type="button"
-              role="radio"
-              aria-checked={project.hookPattern === pattern}
-              className={[
-                project.hookPattern === pattern ? 'is-on' : '',
-                previous === pattern && project.hookPattern !== pattern ? 'is-prev' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              onClick={() => setPattern(pattern)}
-            >
-              {HOOK_PATTERN_LABELS[pattern]}
-              {previous === pattern ? '（前回）' : ''}
-            </button>
-          ))}
-        </div>
-      </section>
-      <div className="gd-vars">
-        <span>差し込み</span>
-        {VARIABLES.map((name) => (
-          <button
-            key={name}
-            type="button"
-            onClick={() =>
-              update((current) => {
-                const caption = ensureCaption(current, focus.current.id);
-                if (!caption) return current;
-                const language = focus.current.language;
-                if (focus.current.field === 'text') {
-                  caption.text[language] += `{${name}}`;
-                  return current;
-                }
-                const prev = caption[focus.current.field] ?? { ja: '', en: '' };
-                caption[focus.current.field] = { ...prev, [language]: `${prev[language] ?? ''}{${name}}` };
-                return current;
-              })
-            }
-          >
-            {`{${name}}`}
-          </button>
-        ))}
-        <span className="gd-muted">[ ] で囲むと強調色</span>
-      </div>
+      <WordingIdeas project={project} />
       <section className="gd-captions">
         <div className="gd-caption-head">
           <span />
@@ -3347,18 +3946,18 @@ export const CaptionStep = ({
           <span>English</span>
         </div>
         {CAPTION_ROWS.map(([id, label, hint]) => {
+          if ((id === 'stand' || id === 'throw') && !editStandAim) return null;
+          if (id === 'cta' && !editCta) return null;
           const caption =
             project.captions.find((item) => item.id === id) ??
-            (id === 'demo' ? defaultDemoCaption() : id === 'cta' ? defaultCtaCaption() : undefined);
+            (id === 'cta' ? defaultCtaCaption() : undefined);
           if (!caption) return null;
+          const rowOrder = id === 'hook' ? 1 : id === 'cta' ? 7 : 5;
           return (
-            <div key={id} className="gd-caption-row">
+            <div key={id} className="gd-caption-row" style={{ order: rowOrder }}>
               <div className="gd-caption-label">
                 <strong>{label}</strong>
                 <span>{captionScene(project, id, hint)}</span>
-                {id === 'demo' && project.templateId !== 't-guide' && !sceneHasRange(project, 'demo') && (
-                  <span>任意 · S6 を入れないときは動画に出ません</span>
-                )}
                 <button
                   type="button"
                   className={`gd-caption-watch ${previewing === id ? 'is-on' : ''}`}
@@ -3367,7 +3966,7 @@ export const CaptionStep = ({
                 >
                   シーンを見る
                 </button>
-                {id === 'cta' && project.templateId !== 't-guide' && (
+                {id === 'cta' && (
                   <select
                     aria-label="CTAデザイン"
                     className="gd-cta-design"
@@ -3494,10 +4093,7 @@ export const CaptionStep = ({
                         <textarea
                           aria-label={`CTA主文（${language === 'ja' ? '日本語' : '英語'}）`}
                           value={s4Text.main[language]}
-                          onFocus={() => {
-                            focus.current = { id, language, field: 'text' };
-                            onPreview(id, language);
-                          }}
+                          onFocus={() => onPreview(id, language)}
                           onChange={(event) => writeS4(language, 'main', event.target.value)}
                         />
                       </label>
@@ -3506,10 +4102,7 @@ export const CaptionStep = ({
                         <textarea
                           aria-label={`CTA補助行（${language === 'ja' ? '日本語' : '英語'}）`}
                           value={s4Text.sub[language]}
-                          onFocus={() => {
-                            focus.current = { id, language, field: 'text' };
-                            onPreview(id, language);
-                          }}
+                          onFocus={() => onPreview(id, language)}
                           onChange={(event) => writeS4(language, 'sub', event.target.value)}
                         />
                       </label>
@@ -3523,10 +4116,7 @@ export const CaptionStep = ({
                       aria-label={`${label}（${language === 'ja' ? '日本語' : '英語'}）`}
                       className={empty ? 'is-warn' : ''}
                       value={caption.text[language]}
-                      onFocus={() => {
-                        focus.current = { id, language, field: 'text' };
-                        onPreview(id, language);
-                      }}
+                      onFocus={() => onPreview(id, language)}
                       onChange={(event) => writeCaption(id, language, event.target.value)}
                     />
                     {note.warn ? (
@@ -3557,13 +4147,17 @@ export const CaptionStep = ({
             </div>
           );
         })}
-      </section>
-      <CaptionAi project={project} />
-      <button type="button" className="gd-link gd-split-link" onClick={() => setSplitHook((value) => !value)}>
-        フックの改行を、動画・完成カード・X用カード・サムネイルで分ける
-      </button>
-      {splitHook && (
-        <section className="gd-captions">
+        <button
+          type="button"
+          className="gd-link gd-split-link"
+          style={{ order: 2 }}
+          aria-expanded={splitHook}
+          onClick={() => setSplitHook((value) => !value)}
+        >
+          フックの改行を、動画・完成カード・X用カード・サムネイルで分ける
+        </button>
+        {splitHook && (
+        <section className="gd-captions" style={{ order: 3 }}>
           {(
             [
               ['cardText', 'card', '完成カード', '空なら動画と同じ'],
@@ -3589,10 +4183,7 @@ export const CaptionStep = ({
                   <textarea
                     aria-label={`${label}（${language === 'ja' ? '日本語' : '英語'}）`}
                     value={project.captions.find((item) => item.id === 'hook')?.[field]?.[language] ?? ''}
-                    onFocus={() => {
-                      focus.current = { id: 'hook', language, field };
-                      onPreview(target, language);
-                    }}
+                    onFocus={() => onPreview(target, language)}
                     onChange={(event) =>
                       update((current) => {
                         const hook = current.captions.find((item) => item.id === 'hook');
@@ -3608,7 +4199,26 @@ export const CaptionStep = ({
             </div>
           ))}
         </section>
-      )}
+        )}
+        <button
+          type="button"
+          className="gd-link gd-split-link"
+          style={{ order: 4 }}
+          aria-expanded={editStandAim}
+          onClick={() => setEditStandAim((value) => !value)}
+        >
+          STAND・AIM の文言を変更する
+        </button>
+        <button
+          type="button"
+          className="gd-link gd-split-link"
+          style={{ order: 6 }}
+          aria-expanded={editCta}
+          onClick={() => setEditCta((value) => !value)}
+        >
+          CTA を変更する
+        </button>
+      </section>
     </div>
   );
 };
@@ -3685,7 +4295,7 @@ export const SoundStep = ({
     selected && license.ok && !selected.creditRequired
       ? `選んだ音源は、書き出し設定の投稿先（${platforms || '未選択'}）すべてで使えます。クレジット表記は不要です`
       : license.message;
-  const gameLine = '全シーン 15%';
+  const gameLine = '全シーン 10%';
 
   useEffect(() => {
     onApply((current) => {
@@ -3734,12 +4344,7 @@ export const SoundStep = ({
     const item = timeline.items.find(
       (entry) => start + 0.001 >= entry.start && start < entry.start + entry.duration,
     );
-    const code =
-      item && project.templateId === 't-guide'
-        ? ({ hook: 'G1', stand: 'G2', card: 'G3', demo: 'G4' } as Partial<Record<SceneKey, string>>)[item.sceneKey]
-        : item
-          ? SCENE_CODE[item.sceneKey]
-          : '';
+    const code = item ? SCENE_CODE[item.sceneKey] : '';
     return code ? `${code} · ${start.toFixed(1)}s` : `${start.toFixed(1)}s`;
   };
 
@@ -3977,36 +4582,38 @@ const ReviewThumbnail = ({
   language,
   width,
   caption,
+  surface,
+  onSurface,
+  actualSize,
+  onActualSize,
+  showSafeZone,
+  showControls,
 }: {
   project: Project;
   language: 'ja' | 'en';
   width: number;
   caption: string;
+  surface: ThumbSurface;
+  onSurface: (surface: ThumbSurface) => void;
+  actualSize: boolean;
+  onActualSize: (value: boolean) => void;
+  showSafeZone: boolean;
+  showControls: boolean;
 }) => {
-  const input = useMemo(
-    () => ({
-      project,
-      language,
-      mediaBaseUrl: 'studio-media://root',
-    }),
-    [project, language],
-  );
-  const height = Math.round((width * 1920) / 1080);
   return (
-    <div className="gd-review-thumb">
+    <div className="gd-review-thumb" style={actualSize ? undefined : { width }}>
       <span>{caption}</span>
-      <div className="gd-review-thumb-frame" style={{ width, height }}>
-        <Thumbnail
-          component={LineupThumbnail}
-          inputProps={input}
-          frameToDisplay={0}
-          durationInFrames={1}
-          compositionWidth={1080}
-          compositionHeight={1920}
-          fps={project.templateParams.fps}
-          style={{ width: '100%', height: '100%' }}
-        />
-      </div>
+      <ThumbnailStage
+        project={project}
+        language={language}
+        fps={project.templateParams.fps}
+        surface={surface}
+        onSurface={onSurface}
+        actualSize={actualSize}
+        onActualSize={onActualSize}
+        showSafeZone={showSafeZone}
+        showControls={showControls}
+      />
     </div>
   );
 };
@@ -4027,6 +4634,9 @@ export const ReviewStep = ({
   const warnings = items.some((item) => item.level === 'warn');
   const [ask, setAsk] = useState(false);
   const [safeZone, setSafeZone] = useState(false);
+  const [showYtGuide, setShowYtGuide] = useState(false);
+  const [thumbSurface, setThumbSurface] = useState<ThumbSurface>('yt');
+  const [thumbActual, setThumbActual] = useState(true);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
   const jaRef = useRef<PlayerRef>(null);
@@ -4040,10 +4650,11 @@ export const ReviewStep = ({
       project,
       mediaBaseUrl: 'studio-media://root',
       showSafeZone: safeZone,
+      showYtGuide,
       audioTracks: tracks,
       audioTrack: tracks.find((track) => track.id === project.audio.bgm?.audioTrackId),
     }),
-    [project, safeZone, tracks],
+    [project, safeZone, showYtGuide, tracks],
   );
   const jaInput = useMemo(() => ({ ...sharedInput, language: 'ja' as const }), [sharedInput]);
   const enInput = useMemo(() => ({ ...sharedInput, language: 'en' as const }), [sharedInput]);
@@ -4053,7 +4664,8 @@ export const ReviewStep = ({
       if (!current.guide.confirmedSteps.includes('review')) {
         current.guide.confirmedSteps = [...current.guide.confirmedSteps, 'review'];
       }
-      current.guide.lastStep = 8;
+      const next = guideStepAfter(7);
+    if (next) current.guide.lastStep = next;
       current.guide.mode = 'guide';
       return current;
     });
@@ -4198,21 +4810,50 @@ export const ReviewStep = ({
               <input type="checkbox" checked={safeZone} onChange={(event) => setSafeZone(event.target.checked)} />
               セーフゾーン
             </label>
+            <label className="gd-review-safe">
+              <input type="checkbox" checked={showYtGuide} onChange={(event) => setShowYtGuide(event.target.checked)} />
+              YouTube の UI ガイド
+            </label>
             <ReviewClock playerRef={jaRef} fps={fps} durationInFrames={durationInFrames} />
           </div>
           <div className="gd-review-thumbs">
             <strong>サムネイル（YouTube / TikTok）</strong>
+            <ThumbnailLayoutSwitch project={project} />
             <div className="gd-review-thumb-row">
-              <ReviewThumbnail project={project} language="ja" width={180} caption="日本語 · 180px（Shorts 一覧）" />
-              <ReviewThumbnail project={project} language="en" width={180} caption="English · 180px（Shorts 一覧）" />
+              <ReviewThumbnail
+                project={project}
+                language="ja"
+                width={thumbActual ? 180 : 220}
+                caption="日本語"
+                surface={thumbSurface}
+                onSurface={setThumbSurface}
+                actualSize={thumbActual}
+                onActualSize={setThumbActual}
+                showSafeZone={safeZone}
+                showControls
+              />
+              <ReviewThumbnail
+                project={project}
+                language="en"
+                width={thumbActual ? 180 : 220}
+                caption="English"
+                surface={thumbSurface}
+                onSurface={setThumbSurface}
+                actualSize={thumbActual}
+                onActualSize={setThumbActual}
+                showSafeZone={safeZone}
+                showControls={false}
+              />
             </div>
-            <ThumbnailFrameControls
-              project={project}
-              frameAt={() => jaRef.current?.getCurrentFrame() ?? 0}
-              onApplied={(frame) => {
-                holdFrame.current = frame;
-              }}
-            />
+            {thumbnailLayoutOf(project) === 'focus' ? null : (
+              <ThumbnailFrameControls
+                project={project}
+                frameAt={() => jaRef.current?.getCurrentFrame() ?? 0}
+                onApplied={(frame) => {
+                  holdFrame.current = frame;
+                }}
+              />
+            )}
             {thumbnailIconWarning(project) ? (
               <p className="gd-review-thumb-note">{thumbnailIconWarning(project)}</p>
             ) : null}
@@ -4230,7 +4871,7 @@ export const ReviewStep = ({
                 </span>
                 {item.step && item.level !== 'ok' && item.level !== 'info' && (
                   <button type="button" className="gd-link" onClick={() => onGoto(item.step!)}>
-                    {item.step} {FIX_STEP[item.step] ?? ''}で直す
+                    {guideStepNumber(item.step)} {FIX_STEP[item.step] ?? ''}で直す
                   </button>
                 )}
               </li>
@@ -4260,6 +4901,319 @@ const postStamp = (iso: string): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const translationLanguageLabel = (language: 'ja' | 'ko'): string => (language === 'ja' ? '日本語' : '한국어');
+
+const translationMark = (
+  project: Project,
+  field: PublishingTranslationField,
+  language: 'ja' | 'ko',
+): { text: string; stale: boolean } => {
+  const stale = publishingTranslationStale(project, field, language);
+  const hand = publishingTranslationHandEdited(project, field, language);
+  if (hand && stale) return { text: '手修正あり · 英語が更新されています', stale: true };
+  if (hand) return { text: '手修正あり', stale: false };
+  if (stale) return { text: '英語が更新されています', stale: true };
+  const cell = project.guide.publishingTranslation?.[field]?.[language];
+  const current = project.publishing[field][language] ?? '';
+  if (cell && current === cell.text) return { text: '翻訳済み', stale: false };
+  return { text: '未翻訳', stale: false };
+};
+
+const PublishFieldNotes = ({
+  project,
+  field,
+  language,
+  value,
+}: {
+  project: Project;
+  field: 'title' | 'description' | 'hashtags';
+  language: Language | 'ko';
+  value: string;
+}) => (
+  <>
+    {(field === 'title' ? titleIssues(value) : []).map((issue) => (
+      <span key={issue.text} className={`gd-publish-warn is-${issue.level}`}>
+        {issue.text}
+      </span>
+    ))}
+    {field === 'title' && language === 'ko' && koreanTitleUsesEnglishHook(project) && (
+      <span className="gd-publish-warn is-warn">韓国語のフックが未入力のため、英語の文を下書きにしています</span>
+    )}
+    {field === 'description' && value.trim() && !hasClutchVaultUrl(value) && (
+      <span className="gd-publish-warn is-warn">説明文の上部に ClutchVault の URL を入れてください</span>
+    )}
+    {field === 'description' && /保存できます|Save it on ClutchVault|저장할 수 있어요/i.test(value) && (
+      <span className="gd-publish-warn is-warn">
+        クローズドβ前は「保存できます」と書かず、定点をチェックできることを書いてください
+      </span>
+    )}
+  </>
+);
+
+const PublishCopy = ({
+  project,
+  credit,
+  onEdit,
+}: {
+  project: Project;
+  credit: string;
+  onEdit: (field: 'title' | 'description' | 'hashtags', language: Language | 'ko', value: string) => void;
+}) => {
+  const languages = publishingTranslationLanguages(project);
+  const includeKorean = languages.includes('ko');
+  const [busy, setBusy] = useState<'generate' | 'read' | null>(null);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const [handoff, setHandoff] = useState<AiHandoff | null>(null);
+  const [paste, setPaste] = useState('');
+  const requestRef = useRef<{ fields: PublishingTranslationField[]; force: boolean }>({
+    fields: ['title', 'description'],
+    force: false,
+  });
+  useEffect(() => {
+    setError('');
+    setNote('');
+    setHandoff(null);
+    setPaste('');
+  }, [project.id]);
+
+  const applyPayload = (payload: PublishingTranslation, fields: PublishingTranslationField[], force: boolean): void => {
+    const missing: string[] = [];
+    for (const field of fields) {
+      if (!(project.publishing[field].en ?? '').trim()) continue;
+      for (const language of languages) {
+        if (!payload[field]?.[language]?.trim()) {
+          missing.push(`${field === 'title' ? 'タイトル' : '説明文'}（${translationLanguageLabel(language)}）`);
+        }
+      }
+    }
+    const hasAny = fields.some((field) => languages.some((language) => Boolean(payload[field]?.[language]?.trim())));
+    if (!hasAny) {
+      setError('翻訳を読めませんでした。もう一度押すか、返ってきたJSONを貼り戻してください。');
+      return;
+    }
+    let skipped: Array<{ field: PublishingTranslationField; language: 'ja' | 'ko' }> = [];
+    update((current) => {
+      const applied = applyPublishingTranslation(current, payload, { fields, force });
+      skipped = applied.skipped;
+      return applied.project;
+    });
+    const parts = [
+      skipped.length > 0
+        ? '手で直した欄は残しました。置き換えるときは「手修正を上書きして再翻訳」を押してください。'
+        : includeKorean
+          ? '日本語と韓国語を入れました。'
+          : '日本語を入れました。',
+    ];
+    if (missing.length > 0) parts.push(`空だった翻訳: ${missing.join('、')}`);
+    setNote(parts.join(' '));
+    setError('');
+    setHandoff(null);
+  };
+
+  const run = async (fields: PublishingTranslationField[], force: boolean): Promise<void> => {
+    const selected = fields.filter((field) => (project.publishing[field].en ?? '').trim());
+    if (selected.length === 0 || busy) return;
+    requestRef.current = { fields: selected, force };
+    setBusy('generate');
+    setError('');
+    setNote('');
+    try {
+      const result = await window.studio.generateAi({ kind: 'publish-translate', project, fields: selected });
+      if (!result.ok) {
+        if (result.handoff) setHandoff(result.handoff);
+        setError(result.message || AI_ERROR_MESSAGE[result.code]);
+        return;
+      }
+      const payload = result.suggestions[0]?.payload;
+      if (!payload || payload.type !== 'publish-translate') {
+        if (result.handoff) setHandoff(result.handoff);
+        setError('自動では返せませんでした。下の文を Claude Code に貼ってください。');
+        return;
+      }
+      applyPayload(payload, selected, force);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'AIを呼び出せませんでした。');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const readPaste = async (): Promise<void> => {
+    if (!handoff || busy) return;
+    setBusy('read');
+    setError('');
+    try {
+      const result = await window.studio.parseAiHandoff({
+        kind: handoff.kind,
+        text: paste,
+        sourceCounts: handoff.sourceCounts,
+        sourceRefs: handoff.sourceRefs,
+      });
+      if (!result.ok) {
+        setError(result.message || AI_ERROR_MESSAGE[result.code]);
+        return;
+      }
+      const payload = result.suggestions[0]?.payload;
+      if (!payload || payload.type !== 'publish-translate') {
+        setError('翻訳を読めませんでした。JSONの形を確認してください。');
+        return;
+      }
+      applyPayload(payload, requestRef.current.fields, requestRef.current.force);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'JSONを読めませんでした。');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const englishReady = Boolean(project.publishing.title.en.trim() || project.publishing.description.en.trim());
+  const handEdited = (['title', 'description'] as const).some(
+    (field) =>
+      Boolean(project.publishing[field].en.trim()) &&
+      languages.some((language) => publishingTranslationHandEdited(project, field, language)),
+  );
+  const sourceFields = [
+    ['title', 'タイトル', 'is-title'],
+    ['description', '説明文', 'is-body'],
+    ['hashtags', 'ハッシュタグ（翻訳しません）', 'is-tags'],
+  ] as const;
+
+  return (
+    <div className="gd-publish">
+      <section className="gd-publish-col" aria-label="英語の原稿">
+        <strong>英語（原稿）</strong>
+        {sourceFields.map(([field, label, size]) => {
+          const value = project.publishing[field].en ?? '';
+          return (
+            <label key={field}>
+              <span className="gd-publish-label">
+                <span>{label}</span>
+                {field === 'title' && (
+                  <span className={value.length > 100 ? 'gd-publish-count is-error' : 'gd-publish-count'}>
+                    {value.length} / 100
+                  </span>
+                )}
+              </span>
+              <textarea
+                aria-label={`${label}（English）`}
+                className={size}
+                value={value}
+                onChange={(event) => onEdit(field, 'en', event.target.value)}
+              />
+              <PublishFieldNotes project={project} field={field} language="en" value={value} />
+            </label>
+          );
+        })}
+        <span className="gd-publish-note">{credit}</span>
+        <div className="gd-publish-actions">
+          {busy ? (
+            <>
+              <p className="gd-publish-note" role="status">
+                {busy === 'read' ? 'JSONを読んでいます' : '翻訳しています'}
+              </p>
+              {busy === 'generate' && (
+                <button type="button" onClick={() => void window.studio.cancelAi()}>
+                  中止
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button type="button" className="primary" disabled={!englishReady} onClick={() => void run(['title', 'description'], false)}>
+                {includeKorean ? '日本語と韓国語に翻訳' : '日本語に翻訳'}
+              </button>
+              {handEdited && (
+                <button type="button" disabled={!englishReady} onClick={() => void run(['title', 'description'], true)}>
+                  手修正を上書きして再翻訳
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        <span className="gd-publish-note">URL、ハッシュタグ、開発者表記は残します。マップ名とエージェント名は決まり訳を使います。</span>
+        {note && (
+          <span className="gd-publish-note" role="status">
+            {note}
+          </span>
+        )}
+        {error && <span className="gd-publish-warn is-error">{error}</span>}
+        {handoff && (
+          <div className="gd-publish-handoff">
+            <span className="gd-publish-note">Claude Code にこの文を貼り、返ってきたJSONを下に戻します。</span>
+            <textarea className="is-body" readOnly value={handoff.prompt} aria-label="Claudeに渡す文" />
+            <button type="button" onClick={() => void navigator.clipboard.writeText(handoff.prompt)}>
+              文をコピー
+            </button>
+            <textarea
+              className="is-body"
+              value={paste}
+              aria-label="Claudeから戻ったJSON"
+              placeholder="返ってきたJSONを貼る"
+              onChange={(event) => setPaste(event.target.value)}
+            />
+            <button type="button" disabled={busy !== null || !paste.trim()} onClick={() => void readPaste()}>
+              貼り戻したJSONを読む
+            </button>
+          </div>
+        )}
+      </section>
+      <section className="gd-publish-col" aria-label="翻訳">
+        <strong>翻訳</strong>
+        <span className="gd-publish-note">英語を書いてから翻訳します。翻訳後も直接直せます。</span>
+        {(['title', 'description'] as const).map((field) => {
+          const label = field === 'title' ? 'タイトル' : '説明文';
+          const size = field === 'title' ? 'is-title' : 'is-body';
+          const fieldHandEdited = languages.some((language) => publishingTranslationHandEdited(project, field, language));
+          const english = project.publishing[field].en.trim();
+          return (
+            <div key={field} className="gd-publish-block">
+              <div className="gd-publish-fieldhead">
+                <strong>{label}</strong>
+                <button
+                  type="button"
+                  disabled={busy !== null || !english}
+                  onClick={() => void run([field], fieldHandEdited)}
+                >
+                  {fieldHandEdited ? 'この項目を上書きして再翻訳' : 'この項目を翻訳'}
+                </button>
+              </div>
+              <div className={includeKorean ? 'gd-publish-langs' : 'gd-publish-langs is-one'}>
+                {languages.map((language) => {
+                  const value = project.publishing[field][language] ?? '';
+                  const mark = translationMark(project, field, language);
+                  return (
+                    <label key={language} className="gd-publish-lang">
+                      <span className="gd-publish-label">
+                        <span>{translationLanguageLabel(language)}</span>
+                        <span className="gd-publish-label-meta">
+                          {field === 'title' && (
+                            <span className={value.length > 100 ? 'gd-publish-count is-error' : 'gd-publish-count'}>
+                              {value.length} / 100
+                            </span>
+                          )}
+                          <span className={mark.stale ? 'gd-publish-status is-stale' : 'gd-publish-status'}>{mark.text}</span>
+                        </span>
+                      </span>
+                      <textarea
+                        aria-label={`${label}（${translationLanguageLabel(language)}）`}
+                        className={size}
+                        value={value}
+                        onChange={(event) => onEdit(field, language, event.target.value)}
+                      />
+                      <PublishFieldNotes project={project} field={field} language={language} value={value} />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </section>
+    </div>
+  );
 };
 
 export const PublishStep = ({ project }: { project: Project }) => {
@@ -4332,89 +5286,23 @@ export const PublishStep = ({ project }: { project: Project }) => {
       <StepHead
         step={8}
         title="投稿内容"
-        text="雛形から自動で入っています。フックや定点情報を変えると追従します（手で直した欄は追従しません）"
+        text="英語が原稿です。翻訳ボタンで日本語を入れます。YouTube（海外）を書き出すときは韓国語も入ります。手で直した欄は雛形に追従しません。"
       />
-      <PublishingAi project={project} />
-      <div className={project.guide.exportPresets.includes('yt-global') ? 'gd-publish is-ko' : 'gd-publish'}>
-        {(
-          [
-            ['ja', '日本語'],
-            ['en', 'English'],
-            ...(project.guide.exportPresets.includes('yt-global')
-              ? [['ko', '한국어（YouTube の翻訳欄用）'] as const]
-              : []),
-          ] as const
-        ).map(([language, heading]) => {
-          const fields = (
-            [
-              ['title', 'タイトル', 'is-title'],
-              ['description', '説明文', 'is-body'],
-              ...(language === 'en'
-                ? ([['hashtags', 'ハッシュタグ', 'is-tags']] as const)
-                : []),
-            ] as const
-          ).map(([field, label, size]) => {
-            const value = project.publishing[field][language] ?? '';
-            const issues = field === 'title' ? titleIssues(value) : [];
-            const descriptionWarn =
-              field === 'description' && value.trim() && !hasClutchVaultUrl(value);
-            const saveClaim =
-              field === 'description' && /保存できます|Save it on ClutchVault|저장할 수 있어요/i.test(value);
-            return (
-              <label key={field}>
-                <span className="gd-publish-label">
-                  <span>{label}</span>
-                  {field === 'title' && (
-                    <span className={value.length > 100 ? 'gd-publish-count is-error' : 'gd-publish-count'}>
-                      {value.length} / 100
-                    </span>
-                  )}
-                </span>
-                <textarea
-                  aria-label={`${label}（${heading}）`}
-                  className={size}
-                  value={value}
-                  onChange={(event) => edit(field, language, event.target.value)}
-                />
-                {issues.map((issue) => (
-                  <span key={issue.text} className={`gd-publish-warn is-${issue.level}`}>
-                    {issue.text}
-                  </span>
-                ))}
-                {field === 'title' && language === 'ko' && koreanTitleUsesEnglishHook(project) && (
-                  <span className="gd-publish-warn is-warn">
-                    韓国語のフックが未入力のため、英語の文を下書きにしています
-                  </span>
-                )}
-                {descriptionWarn && (
-                  <span className="gd-publish-warn is-warn">説明文の上部に ClutchVault の URL を入れてください</span>
-                )}
-                {saveClaim && (
-                  <span className="gd-publish-warn is-warn">
-                    クローズドβ前は「保存できます」と書かず、定点をチェックできることを書いてください
-                  </span>
-                )}
-              </label>
-            );
-          });
-          if (language === 'ko') {
-            return (
-              <details key={language} className="gd-publish-col">
-                <summary>{heading}</summary>
-                {fields}
-                <span className="gd-publish-note">{credit}</span>
-              </details>
-            );
+      <PublishCopy project={project} credit={credit} onEdit={edit} />
+      <section className="gd-publish-track" aria-label="固定コメント">
+        <strong>固定コメント（英語）</strong>
+        <span>手順{guideStepNumber(5)}で選んだ文です。YouTubeには自動で付きません。投稿するときにコピーして、自分で固定します。</span>
+        <textarea
+          aria-label="固定コメント"
+          value={project.publishing.pinnedComment}
+          onChange={(event) =>
+            update((current) => {
+              current.publishing.pinnedComment = event.target.value;
+              return current;
+            })
           }
-          return (
-            <section key={language} className="gd-publish-col">
-              <strong>{heading}</strong>
-              {fields}
-              <span className="gd-publish-note">{credit}</span>
-            </section>
-          );
-        })}
-      </div>
+        />
+      </section>
       <section className="gd-publish-track" aria-label="定点メモリンク">
         <strong>定点メモリンク</strong>
         <span>
@@ -4506,7 +5394,7 @@ export const ExportStep = ({
         const preset = job.presetIds[0];
         const basename = preset ? guessBasename(project, preset) : '';
         if (job.slot === 'x') {
-          const prepared = prepareXPost(project, { basename });
+          const prepared = prepareXPost(project);
           return prepared.copyable ? prepared.text : '';
         }
         return copyForJob(project, job, basename, '').text;

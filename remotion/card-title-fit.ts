@@ -1,4 +1,4 @@
-import { MONT_LATIN, ZEN_LATIN } from './card-title-latin-widths';
+import { MONT_LATIN, ZEN_LATIN } from '../shared/card-title-latin-widths';
 
 export type CardTitleLatin = 'zen' | 'montserrat';
 

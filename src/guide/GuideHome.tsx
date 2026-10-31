@@ -21,6 +21,7 @@ const INHERIT_OPTIONS: Array<{ id: InheritItem; label: string; defaultOn: boolea
   { id: 'templateParams', label: 'アクセント色・fps', defaultOn: true },
   { id: 'cardLayout', label: 'カードのレイアウト', defaultOn: false },
   { id: 'cardAimZoom', label: '合わせ位置ズーム', defaultOn: true },
+  { id: 'thumbnail', label: 'サムネイルの配置', defaultOn: true },
 ];
 
 const formatUpdated = (iso: string): string => {
@@ -51,7 +52,6 @@ export const GuideHome = ({
 }) => {
   const store = useStudioStore();
   const [filter, setFilter] = useState<'all' | Project['status']>('all');
-  const [templateId, setTemplateId] = useState<Project['templateId']>('t-std');
   const [title, setTitle] = useState('新しい定点');
   const [sourceId, setSourceId] = useState(store.projects[0]?.id ?? '');
   const [items, setItems] = useState<InheritItem[]>(
@@ -71,7 +71,6 @@ export const GuideHome = ({
 
   const create = (): void => {
     const options: ProjectCreateOptions = {
-      templateId,
       title: title.trim() || '新しい定点',
       inheritFromId: sourceId || undefined,
       inheritItems: sourceId ? items : [],
@@ -228,9 +227,7 @@ export const GuideHome = ({
                     <strong>{item.title}</strong>
                     <span className={`gd-status is-${item.status}`}>{STATUS_LABEL[item.status]}</span>
                   </div>
-                  <span className="gd-muted">
-                    {item.templateId === 't-guide' ? 'T-GUIDE' : 'T-STD'} · 更新 {formatUpdated(item.updatedAt)}
-                  </span>
+                  <span className="gd-muted">更新 {formatUpdated(item.updatedAt)}</span>
                   <div className="gd-progress">
                     <div className="gd-progress-track">
                       <span style={{ width: `${(item.completedSteps / 10) * 100}%` }} />
@@ -259,7 +256,7 @@ export const GuideHome = ({
         <section className="gd-create" aria-label="新しい動画を作る">
           <span className="gd-kicker">STEP 0</span>
           <h2>新しい動画を作る</h2>
-          <p className="gd-muted">テンプレートを選ぶと、作成の手順が決まります</p>
+          <p className="gd-muted">定点ショートの新しいプロジェクトを作ります</p>
           <label className="gd-field">
             シリーズの既定エージェント
             <select
@@ -279,31 +276,6 @@ export const GuideHome = ({
                 </option>
               ))}
             </select>
-          </label>
-          <span className="gd-field">テンプレート</span>
-          <label className={`gd-choice ${templateId === 't-std' ? 'is-on' : ''}`}>
-            <input
-              type="radio"
-              name="template"
-              checked={templateId === 't-std'}
-              onChange={() => setTemplateId('t-std')}
-            />
-            <span>
-              <strong>T-STD 定点ショート</strong>
-              <span>28秒 · 7シーン · ループ終わり · 手順10</span>
-            </span>
-          </label>
-          <label className={`gd-choice ${templateId === 't-guide' ? 'is-on' : ''}`}>
-            <input
-              type="radio"
-              name="template"
-              checked={templateId === 't-guide'}
-              onChange={() => setTemplateId('t-guide')}
-            />
-            <span>
-              <strong>T-GUIDE ガイド型</strong>
-              <span>24秒 · 4区間（タイトル・手順・カード・デモ）</span>
-            </span>
           </label>
           <label className="gd-field">
             プロジェクト名

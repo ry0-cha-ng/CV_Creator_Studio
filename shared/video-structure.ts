@@ -82,7 +82,6 @@ export const structureLabel = (sceneOrder: SceneKey[], ctaDesign?: CtaDesign): s
 };
 
 export const configuredSceneOrder = (project: Project): SceneKey[] => {
-  if (project.templateId === 't-guide') return ['hook', 'stand', 'card', 'demo'];
   const source = project.templateParams.sceneOrder?.length
     ? project.templateParams.sceneOrder
     : DEFAULT_SCENE_ORDER;

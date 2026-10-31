@@ -6,11 +6,12 @@ import {
   LineupCardX45,
   LineupShortStandard,
 } from '../remotion/LineupShortStandard';
-import { LineupThumbnail } from '../remotion/LineupThumbnail';
 import { durationWarnings } from '../shared/production';
+import { thumbnailLayoutOf } from '../shared/thumbnail-focus';
 import type { Language, Project } from '../shared/schema/project';
 import type { AudioTrack } from '../shared/schema/audio';
 import { ThumbnailFrameControls } from './ThumbnailFrameControls';
+import { ThumbnailLayoutSwitch, ThumbnailStage, ThumbnailSurfaceControls, useThumbSurface } from './ThumbnailStage';
 
 const TRIPLE_MIN = 820;
 const PAIR_MIN = 580;
@@ -67,6 +68,7 @@ export const PreviewStage = ({
 }: Props): ReactNode => {
   const panelRef = useRef<HTMLElement>(null);
   const [previewWidth, setPreviewWidth] = useState(1440);
+  const [showYtGuide, setShowYtGuide] = useState(false);
   const [solo, setSolo] = useState<PreviewPaneId>('short');
   const [cardOpen, setCardOpen] = useState(false);
   const [xCardZoomed, setXCardZoomed] = useState(false);
@@ -75,6 +77,8 @@ export const PreviewStage = ({
   const layout = layoutFromWidth(previewWidth);
   const warnings = durationWarnings(durationInFrames / project.templateParams.fps);
   const fps = project.templateParams.fps;
+  const [thumbSurface, setThumbSurface, thumbActual, setThumbActual] = useThumbSurface();
+  const focusLayout = thumbnailLayoutOf(project) === 'focus';
   const showShort = paneVisible('short', layout, solo, cardOpen);
   const showCard45 = paneVisible('card45', layout, solo, cardOpen);
   const showCard = paneVisible('card', layout, solo, cardOpen);
@@ -172,6 +176,14 @@ export const PreviewStage = ({
             />
             セーフゾーン
           </label>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={showYtGuide}
+              onChange={(event) => setShowYtGuide(event.target.checked)}
+            />
+            YouTube の UI ガイド
+          </label>
         </div>
       </div>
       {layout === 'single' && (
@@ -215,6 +227,7 @@ export const PreviewStage = ({
                   inputProps={{
                     ...inputProps,
                     showSafeZone,
+                    showYtGuide,
                     audioTracks,
                     audioTrack: audioTracks.find((track) => track.id === project.audio.bgm?.audioTrackId),
                   }}
@@ -235,31 +248,40 @@ export const PreviewStage = ({
             <div className="preview-pane-label">
               <strong>サムネイル</strong>
               <span>9:16</span>
+              <ThumbnailLayoutSwitch project={project} />
               <button type="button" className="preview-float-close" onClick={() => setThumbOpen(true)}>
                 拡大
               </button>
             </div>
-            <ThumbnailFrameControls
-              project={project}
-              frameAt={() => playerRef.current?.getCurrentFrame() ?? 0}
-              onApplied={(frame) => {
-                holdFrame.current = frame;
-              }}
+            <ThumbnailSurfaceControls
+              surface={thumbSurface}
+              onSurface={setThumbSurface}
+              actualSize={thumbActual}
+              onActualSize={setThumbActual}
             />
+            {focusLayout ? null : (
+              <ThumbnailFrameControls
+                project={project}
+                frameAt={() => playerRef.current?.getCurrentFrame() ?? 0}
+                onApplied={(frame) => {
+                  holdFrame.current = frame;
+                }}
+              />
+            )}
             <div className="preview-frame-slot">
               <div className="preview-frame">
                 {playbackSuspended ? (
                   <div className="preview-suspended">書き出し中</div>
                 ) : (
-                  <Thumbnail
-                    component={LineupThumbnail}
-                    inputProps={inputProps}
-                    frameToDisplay={0}
-                    durationInFrames={1}
-                    compositionWidth={1080}
-                    compositionHeight={1920}
+                  <ThumbnailStage
+                    project={project}
+                    language={language}
                     fps={fps}
-                    style={{ width: '100%', height: '100%' }}
+                    surface={thumbSurface}
+                    onSurface={setThumbSurface}
+                    actualSize={thumbActual}
+                    onActualSize={setThumbActual}
+                    showSafeZone={showSafeZone}
                   />
                 )}
               </div>
@@ -383,30 +405,39 @@ export const PreviewStage = ({
               <div className="preview-pane-label">
                 <strong>サムネイル</strong>
                 <span>9:16</span>
+                <ThumbnailLayoutSwitch project={project} />
                 <button type="button" className="preview-float-close" onClick={() => setThumbOpen(false)}>
                   閉じる
                 </button>
               </div>
-              <ThumbnailFrameControls
-                project={project}
-                frameAt={() => playerRef.current?.getCurrentFrame() ?? 0}
-                onApplied={(frame) => {
-                  holdFrame.current = frame;
-                }}
+              <ThumbnailSurfaceControls
+                surface={thumbSurface}
+                onSurface={setThumbSurface}
+                actualSize={thumbActual}
+                onActualSize={setThumbActual}
               />
+              {focusLayout ? null : (
+                <ThumbnailFrameControls
+                  project={project}
+                  frameAt={() => playerRef.current?.getCurrentFrame() ?? 0}
+                  onApplied={(frame) => {
+                    holdFrame.current = frame;
+                  }}
+                />
+              )}
               <div className="x-card-modal-frame is-thumb">
                 {playbackSuspended ? (
                   <div className="preview-suspended">書き出し中</div>
                 ) : (
-                  <Thumbnail
-                    component={LineupThumbnail}
-                    inputProps={inputProps}
-                    frameToDisplay={0}
-                    durationInFrames={1}
-                    compositionWidth={1080}
-                    compositionHeight={1920}
+                  <ThumbnailStage
+                    project={project}
+                    language={language}
                     fps={fps}
-                    style={{ width: '100%', height: '100%' }}
+                    surface={thumbSurface}
+                    onSurface={setThumbSurface}
+                    actualSize={thumbActual}
+                    onActualSize={setThumbActual}
+                    showSafeZone={showSafeZone}
                   />
                 )}
               </div>

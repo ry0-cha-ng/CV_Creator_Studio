@@ -76,7 +76,7 @@ export const usedSourceSpan = (
         clip.in + item.duration,
       );
     }
-    if (item.sceneKey === 'card' || item.presentation === 'guide-card') {
+    if (item.sceneKey === 'card') {
       for (const slot of cardSlots) {
         if (project.cardStills[slot.slot]) continue;
         includeSourceRange(project, assetId, slot.sceneKey, [{ from: 0, to: item.duration }], bounds);

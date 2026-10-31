@@ -33,7 +33,6 @@ export const AnnotationWeightField = ({
           </button>
         ))}
       </div>
-      <span className="gd-zoom-hint">赤とネイビーの縁。強調は線を太くし、減光は目印の周りだけを残します。</span>
     </div>
   );
 };

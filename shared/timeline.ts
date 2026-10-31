@@ -31,8 +31,8 @@ const BASE_DURATIONS: Record<SceneKey, number> = {
 
 export const BASE_SCENE_DURATIONS = BASE_DURATIONS;
 
-/** 切り抜きで秒数を指定できるシーン。カードは自動尺のまま。 */
-export const TRIM_DURATION_SCENES: SceneKey[] = ['hook', 'stand', 'aim', 'throw', 'demo', 'loop'];
+/** 秒数を指定できるシーン。カードは映像切り抜きなしで尺だけ変える。 */
+export const TRIM_DURATION_SCENES: SceneKey[] = ['hook', 'stand', 'aim', 'throw', 'card', 'demo', 'loop'];
 
 export const sceneDurationLimits = (sceneKey: SceneKey): { min: number; max: number } =>
   sceneKey === 'demo'
@@ -45,18 +45,7 @@ export const clampSceneDuration = (sceneKey: SceneKey, seconds: number): number 
   return Math.min(limits.max, Math.max(limits.min, seconds));
 };
 
-export const builtinSceneDuration = (
-  sceneKey: SceneKey,
-  templateId: Project['templateId'],
-): number => {
-  if (templateId === 't-guide') {
-    if (sceneKey === 'hook') return 2.5;
-    if (sceneKey === 'stand') return 9.5;
-    if (sceneKey === 'card') return 2;
-    if (sceneKey === 'demo') return 10;
-  }
-  return BASE_DURATIONS[sceneKey];
-};
+export const builtinSceneDuration = (sceneKey: SceneKey): number => BASE_DURATIONS[sceneKey];
 
 export const normalizeSceneDurationDefaults = (
   raw: unknown,
@@ -129,7 +118,6 @@ export const loopRangeBeforeHook = (
   project: Project,
   durationSec?: number,
 ): { assetId: string; in: number; out: number } | null => {
-  if (project.templateId === 't-guide') return null;
   const hookScene = project.scenes.find((scene) => scene.sceneKey === 'hook');
   const hookClip = project.clips.find((clip) => clip.id === hookScene?.clipId);
   if (!hookClip) return null;
@@ -186,7 +174,7 @@ const itemFromScene = (
     speed: 1,
     layout: scene?.layout916 ?? 'blur-fit',
     transition: 'cut',
-    volume: scene?.volume ?? 0.15,
+    volume: scene?.volume ?? 0.1,
     arrow: null,
   };
 };
@@ -215,35 +203,6 @@ const withSavedEffectAssignments = (project: Project, timeline: Timeline): Timel
 };
 
 const buildTimelineBody = (project: Project): Timeline => {
-  if (project.templateId === 't-guide') {
-    const saved = project.templateParams.sceneDurations ?? {};
-    const hookLen = typeof saved.hook === 'number' ? clampSceneDuration('hook', saved.hook) : 2.5;
-    const standLen = typeof saved.stand === 'number' ? clampSceneDuration('stand', saved.stand) : 9.5;
-    const demoLen = typeof saved.demo === 'number' ? clampSceneDuration('demo', saved.demo) : 10;
-    const cardStart = hookLen + standLen;
-    const demoStart = cardStart + 2;
-    const items = [
-      itemFromScene(project, 'hook', 0, hookLen, 'guide-title'),
-      itemFromScene(project, 'stand', hookLen, standLen, 'guide-steps'),
-      itemFromScene(project, 'card', cardStart, 2, 'guide-card'),
-      itemFromScene(project, 'demo', demoStart, demoLen, 'guide-demo'),
-    ];
-    return {
-      durationSec: demoStart + demoLen,
-      items,
-      volumePoints: items.map((item) => ({
-        id: `volume-${item.id}`,
-        time: item.start,
-        game: item.volume,
-        bgm: sceneBgmLevel(project, item.sceneKey),
-      })),
-      effects: [
-        { id: 'guide-pop', label: 'タイトル', audioTrackId: null, start: 0.2, volume: 0.8 },
-        { id: 'guide-step', label: '手順', audioTrackId: null, start: hookLen, volume: 0.7 },
-      ],
-    };
-  }
-
   const durations = sceneDurations(project);
   const demoScene = project.scenes.find((scene) => scene.sceneKey === 'demo');
   const includeDemo = Boolean(
@@ -335,24 +294,18 @@ export const applySceneOrder = (
   };
 };
 
+const mediaDurationOf = (project: Project, clip: { assetId: string; out: number }): number =>
+  Math.max(0.1, project.assets.find((asset) => asset.id === clip.assetId)?.meta.duration ?? clip.out);
+
+const storedTimeline = (project: Project): Timeline | null =>
+  project.timeline ?? (project.timelineEdited ? buildTimeline(project) : null);
+
+/** シーンのクリップ範囲を、タイムラインと手順の尺へ同時に写す。 */
 export const rewriteSceneRange = (project: Project, sceneKey: SceneKey): Project => {
-  if (!project.timeline) return project;
   const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
   const clip = project.clips.find((item) => item.id === scene?.clipId);
-  const target = project.timeline.items.find((item) => item.sceneKey === sceneKey);
-  if (!scene || !clip || !target) return project;
-  const timeline = trimTimelineItem(
-    project.timeline,
-    target.id,
-    'end',
-    clip.out - clip.in,
-    project.templateId,
-  );
-  const items = timeline.items.map((item) =>
-    item.id === target.id ? { ...item, layout: scene.layout916, sourceOffset: 0 } : item,
-  );
-  const nextTimeline = { ...timeline, items };
-  return withDemoDuration({ ...project, timeline: nextTimeline }, nextTimeline);
+  if (!scene || !clip) return project;
+  return applySceneCutDuration(project, sceneKey, clip.out - clip.in);
 };
 
 export const activeTimeline = (project: Project): Timeline =>
@@ -387,6 +340,18 @@ export const rangeForSceneDuration = (
   return { in: nextIn, out: nextIn + span };
 };
 
+/** 終了位置を基準に、指定した尺の切り抜き範囲を返す。 */
+export const rangeForSceneDurationFromOut = (
+  end: number,
+  sceneDuration: number,
+  mediaDuration: number,
+): { in: number; out: number } => {
+  const span = Math.min(Math.max(0.1, sceneDuration), Math.max(0.1, mediaDuration));
+  if (mediaDuration <= span) return { in: 0, out: mediaDuration };
+  const nextOut = Math.min(Math.max(span, end), mediaDuration);
+  return { in: nextOut - span, out: nextOut };
+};
+
 export const curveValue = (
   points: Timeline['volumePoints'],
   time: number,
@@ -394,7 +359,7 @@ export const curveValue = (
 ): number => {
   const sorted = [...points].sort((left, right) => left.time - right.time);
   const first = sorted[0];
-  if (!first) return key === 'game' ? 0.15 : 1;
+  if (!first) return key === 'game' ? 0.1 : 1;
   if (time <= first.time) return first[key];
   for (let index = 1; index < sorted.length; index += 1) {
     const previous = sorted[index - 1];
@@ -404,7 +369,7 @@ export const curveValue = (
     const ratio = span === 0 ? 0 : (time - previous.time) / span;
     return previous[key] + (current[key] - previous[key]) * ratio;
   }
-  return sorted[sorted.length - 1]?.[key] ?? (key === 'game' ? 0.15 : 1);
+  return sorted[sorted.length - 1]?.[key] ?? (key === 'game' ? 0.1 : 1);
 };
 
 const nextId = (prefix: string): string =>
@@ -416,9 +381,7 @@ const clamp = (value: number, min: number, max: number): number =>
 export const trimLimits = (
   item: TimelineItem,
   items: TimelineItem[],
-  templateId: Project['templateId'],
 ): { min: number; max: number } => {
-  if (templateId === 't-guide') return { min: 0.5, max: STRETCH_MAX };
   const siblings = items.filter((entry) => entry.sceneKey === item.sceneKey).length;
   if (item.sceneKey === 'demo') {
     return {
@@ -434,11 +397,10 @@ export const trimTimelineItem = (
   itemId: string,
   edge: 'start' | 'end',
   nextDuration: number,
-  templateId: Project['templateId'],
 ): Timeline => {
   const items = timeline.items.map((item) => {
     if (item.id !== itemId) return item;
-    const limits = trimLimits(item, timeline.items, templateId);
+    const limits = trimLimits(item, timeline.items);
     let duration = clamp(nextDuration, limits.min, limits.max);
     if (edge === 'end') return { ...item, duration };
     const nextOffset = item.sourceOffset + (item.duration - duration) * item.speed;
@@ -477,7 +439,7 @@ export const withDemoDuration = <T extends Project>(project: T, timeline: Timeli
   };
 };
 
-/** シーンの再生尺を保存する。タイムラインを手編集済みなら、そのシーンの長さも合わせる。 */
+/** シーンの再生尺を、手順・クリップ範囲・タイムラインへ同時に保存する。 */
 export const applySceneCutDuration = (
   project: Project,
   sceneKey: SceneKey,
@@ -485,7 +447,7 @@ export const applySceneCutDuration = (
 ): Project => {
   if (!TRIM_DURATION_SCENES.includes(sceneKey)) return project;
   const duration = clampSceneDuration(sceneKey, seconds);
-  const next: Project = {
+  let next: Project = {
     ...project,
     templateParams: {
       ...project.templateParams,
@@ -496,12 +458,71 @@ export const applySceneCutDuration = (
       ...(sceneKey === 'demo' ? { demoDuration: duration } : {}),
     },
   };
-  if (!project.timelineEdited || !project.timeline) return next;
-  const item = project.timeline.items.find((entry) => entry.sceneKey === sceneKey);
-  if (!item) return next;
-  const timeline = trimTimelineItem(project.timeline, item.id, 'end', duration, project.templateId);
-  const withTimeline = { ...next, timeline };
-  return sceneKey === 'demo' ? withDemoDuration(withTimeline, timeline) : withTimeline;
+  const scene = next.scenes.find((entry) => entry.sceneKey === sceneKey);
+  const clip = next.clips.find((entry) => entry.id === scene?.clipId);
+  if (clip) {
+    const range = rangeForSceneDuration(clip.in, duration, mediaDurationOf(next, clip));
+    next = {
+      ...next,
+      clips: next.clips.map((entry) =>
+        entry.id === clip.id ? { ...entry, in: range.in, out: range.out } : entry,
+      ),
+    };
+  }
+  const timeline = storedTimeline(next);
+  if (!timeline) return next;
+  const matches = timeline.items.filter((entry) => entry.sceneKey === sceneKey);
+  if (matches.length !== 1) {
+    return next.timeline ? next : { ...next, timeline };
+  }
+  const item = matches[0];
+  const trimmed = trimTimelineItem(timeline, item.id, 'end', duration);
+  const items = trimmed.items.map((entry) =>
+    entry.id === item.id
+      ? { ...entry, layout: scene?.layout916 ?? entry.layout, sourceOffset: 0 }
+      : entry,
+  );
+  const nextTimeline = { ...trimmed, items };
+  const withTimeline = { ...next, timeline: nextTimeline };
+  return sceneKey === 'demo' ? withDemoDuration(withTimeline, nextTimeline) : withTimeline;
+};
+
+/** タイムライン上の尺を、手順の sceneDurations とクリップ範囲へ写す。 */
+export const syncTimelineDurationsToScenes = (project: Project, timeline: Timeline): Project => {
+  const sceneDurationsNext = { ...project.templateParams.sceneDurations };
+  let clips = project.clips;
+  let demoDuration = project.templateParams.demoDuration;
+  for (const sceneKey of TRIM_DURATION_SCENES) {
+    const items = timeline.items.filter((item) => item.sceneKey === sceneKey);
+    if (items.length === 0) continue;
+    const duration = clampSceneDuration(
+      sceneKey,
+      items.reduce((sum, item) => sum + item.duration, 0),
+    );
+    sceneDurationsNext[sceneKey] = duration;
+    if (sceneKey === 'demo') demoDuration = Math.max(DEMO_DURATION_MIN, duration);
+    if (items.length !== 1) continue;
+    const item = items[0];
+    if (item.sourceOffset !== 0 || item.speed !== 1) continue;
+    const scene = project.scenes.find((entry) => entry.sceneKey === sceneKey);
+    const clip = clips.find((entry) => entry.id === scene?.clipId);
+    if (!clip) continue;
+    const range = rangeForSceneDuration(clip.in, duration, mediaDurationOf(project, clip));
+    if (range.in === clip.in && range.out === clip.out) continue;
+    clips = clips.map((entry) =>
+      entry.id === clip.id ? { ...entry, in: range.in, out: range.out } : entry,
+    );
+  }
+  return {
+    ...project,
+    clips,
+    timeline,
+    templateParams: {
+      ...project.templateParams,
+      sceneDurations: sceneDurationsNext,
+      demoDuration,
+    },
+  };
 };
 
 export const applySceneDurationDefaults = (
@@ -526,10 +547,11 @@ export const applyDemoDurationToProject = (project: Project, seconds: number): P
       demoDuration: duration,
     },
   };
-  if (!project.timelineEdited || !project.timeline) return withParam;
-  const demo = project.timeline.items.find((item) => item.sceneKey === 'demo');
+  const timeline = storedTimeline(withParam);
+  if (!timeline) return withParam;
+  const demo = timeline.items.find((item) => item.sceneKey === 'demo');
   if (!demo) return withParam;
-  const timelineNext = trimTimelineItem(project.timeline, demo.id, 'end', duration, project.templateId);
+  const timelineNext = trimTimelineItem(timeline, demo.id, 'end', duration);
   return withDemoDuration({ ...withParam, timeline: timelineNext }, timelineNext);
 };
 

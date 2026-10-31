@@ -187,6 +187,13 @@ export class YoutubeStore {
     return next;
   }
 
+  basicReports(): YoutubeReport[] {
+    const rows = this.database().prepare("SELECT data FROM youtube_reports WHERE kind = 'period-basic'").all() as Array<{
+      data: string;
+    }>;
+    return parseRows(rows, youtubeReportSchema);
+  }
+
   reports(videoId?: string): YoutubeReport[] {
     const rows = (
       videoId

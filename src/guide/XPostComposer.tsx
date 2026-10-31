@@ -87,7 +87,7 @@ export const XPostComposer = ({ project }: { project: Project }) => {
           {prepared.copyable ? 'コピーできます' : '未完成'}
         </span>
       </header>
-      <p className="xpost-lead">日英のフックと2つのリンクから組み立てます。カードに出るマップやエージェントは本文へ入れません。</p>
+      <p className="xpost-lead">定点の見出し、日英のフック、2つのリンクから組み立てます。末尾は #VAROLANT #定点 です。</p>
 
       <div className="xpost-hooks">
         <label>

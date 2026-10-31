@@ -12,13 +12,17 @@ import {
   AI_ERROR_MESSAGE,
   AI_SENT,
   analysisDisclaimer,
+  classifyClaudeText,
+  unwrapModelText,
   buildCaptionContext,
   buildHypothesisContext,
   buildNextActionContext,
   buildNoticesContext,
   buildPrompt,
   clipAiInstruction,
+  buildPublishTranslateContext,
   buildPublishingContext,
+  buildWordingContext,
   buildSummaryContext,
   findUnsafeContext,
   interpretModelOutput,
@@ -40,10 +44,24 @@ import {
   type AiStatus,
   type AiSuggestion,
 } from '../../../shared/ai';
+import {
+  buildFeatureIdeaPrompt,
+  parseFeatureIdeas,
+  type FeatureIdeaInput,
+  type ParsedFeatureIdea,
+} from '../../../shared/competitor-observation';
+import type { CompetitorResult } from '../../../shared/schema/competitor';
 import { patchStudioSettings, readStudioSettings } from './studio-settings';
 
 const execFileAsync = promisify(execFile);
 const TIMEOUT_MS = 90_000;
+
+/** 特徴候補には手渡しの経路が無いので、「下の文を貼る」案内を出さない文言に差し替える。 */
+const FEATURE_IDEA_MESSAGE: Partial<Record<AiErrorCode, string>> = {
+  unauthenticated: 'Claudeにログインしていません。Claude Code でログインしてから、もう一度押してください。',
+  invalid_output: 'AIの返答を候補として読めませんでした。もう一度押すか、手でタグを付けてください。',
+  unavailable: 'Claudeを自動で呼び出せません。AIの設定と、Claude Code へのログインを確認してください。',
+};
 
 type Running = {
   provider: AiRuntimeProvider;
@@ -179,6 +197,58 @@ export class AiService {
     return last;
   }
 
+  /**
+   * 競合の注目動画に共通していそうな特徴の候補。送るのは自分のタグ・気づき・形式・注目した理由だけ。
+   * 手渡し（Claude Code に貼る）経路は持たず、Claude が使えないときは失敗を返す。
+   */
+  async featureIdeas(input: FeatureIdeaInput): Promise<CompetitorResult<ParsedFeatureIdea[]>> {
+    const fail = (code: AiErrorCode): CompetitorResult<ParsedFeatureIdea[]> => ({
+      ok: false,
+      code: code === 'busy' ? 'busy' : code === 'rate_limited' ? 'rate_limited' : 'unavailable',
+      message: FEATURE_IDEA_MESSAGE[code] ?? AI_ERROR_MESSAGE[code],
+    });
+    if (this.running) return fail('busy');
+    const settings = await readStudioSettings();
+    const choice = settings.aiProvider ?? 'auto';
+    if (choice === 'disabled') return fail('disabled');
+    if (findUnsafeContext(input)) return fail('invalid_output');
+    const prompt = buildFeatureIdeaPrompt(input);
+    let last: AiErrorCode = 'unavailable';
+    for (const provider of providersFor(choice)) {
+      if (provider === 'claude-code-handoff') break;
+      if (!(await this.findClaude())) break;
+      const job: Running = { provider, cancelled: false, timedOut: false };
+      this.running = job;
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'cv-ai-'));
+      try {
+        const raw =
+          provider === 'claude-local-agent' ? await this.runAgent(prompt, directory, job) : await this.runCli(prompt, directory, job);
+        if (job.cancelled) return fail('cancelled');
+        if (job.timedOut) return fail('timeout');
+        const text = unwrapModelText(raw);
+        const ideas = parseFeatureIdeas(text, input.videos.length);
+        if (ideas) {
+          this.rateLimited = false;
+          return { ok: true, data: ideas };
+        }
+        last = classifyClaudeText(text) ?? 'invalid_output';
+      } catch (error) {
+        if (job.cancelled) return fail('cancelled');
+        if (job.timedOut) return fail('timeout');
+        last = classifyClaudeText(error instanceof Error ? error.message : '') ?? 'unavailable';
+      } finally {
+        this.running = null;
+        await rm(directory, { recursive: true, force: true });
+      }
+      if (last === 'rate_limited') {
+        this.rateLimited = true;
+        return fail(last);
+      }
+      if (!shouldContinue(choice, last)) break;
+    }
+    return fail(last);
+  }
+
   parseHandoff(raw: unknown): AiGenerateResult {
     const request = raw as Partial<AiHandoffParseRequest>;
     if (!request || typeof request.text !== 'string' || typeof request.kind !== 'string') {
@@ -200,6 +270,47 @@ export class AiService {
     const request = raw as Partial<AiGenerateRequest> | null;
     if (!request || typeof request.kind !== 'string') return { ok: false, result: failure('invalid_output') };
     try {
+      if (request.kind === 'publish-translate') {
+        const project = parseProject(request.project);
+        const translateFields = [
+          ...new Set((request.fields ?? []).filter((field) => field === 'title' || field === 'description')),
+        ];
+        if (translateFields.length === 0) return { ok: false, result: failure('invalid_output') };
+        const context = buildPublishTranslateContext(project, translateFields);
+        if (Object.keys(context.fields).length === 0) return { ok: false, result: failure('invalid_output') };
+        const unsafe = findUnsafeContext(context);
+        if (unsafe) return { ok: false, result: failure('invalid_output') };
+        return {
+          ok: true,
+          value: {
+            kind: request.kind,
+            prompt: buildPrompt(request.kind, context),
+            sentSummary: AI_SENT[request.kind],
+            sourceCounts: countsOf(context),
+            sourceRefs: [`project:${project.id}`],
+          },
+        };
+      }
+      if (request.kind === 'wording') {
+        const project = parseProject(request.project);
+        const context = buildWordingContext(
+          project,
+          typeof request.brief === 'string' ? request.brief : '',
+          typeof request.tone === 'string' ? request.tone : '',
+        );
+        const unsafe = findUnsafeContext(context);
+        if (unsafe) return { ok: false, result: failure('invalid_output') };
+        return {
+          ok: true,
+          value: {
+            kind: request.kind,
+            prompt: buildPrompt(request.kind, context),
+            sentSummary: AI_SENT[request.kind],
+            sourceCounts: countsOf(context),
+            sourceRefs: [`project:${project.id}`],
+          },
+        };
+      }
       if (request.kind === 'captions' || request.kind === 'publishing') {
         const project = parseProject(request.project);
         const context = request.kind === 'captions' ? buildCaptionContext(project) : buildPublishingContext(project);

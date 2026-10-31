@@ -179,5 +179,9 @@ const matches = (project: Project, variable: PrimaryVariable | undefined, value:
   if (variable === 'opening') return project.analytics.openingType === value;
   if (variable === 'cta') return project.analytics.ctaType === value || project.analytics.durationLabel === value;
   if (variable === 'length') return project.analytics.durationLabel === value;
+  if (variable === 'thumbnail') {
+    const layout = project.thumbnail?.layout === 'focus' ? 'focus' : 'classic';
+    return value === layout || value === (layout === 'focus' ? 'フォーカス' : '従来');
+  }
   return false;
 };

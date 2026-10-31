@@ -7,6 +7,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  powerMonitor,
   protocol,
   safeStorage,
   shell,
@@ -24,6 +25,11 @@ import { ProjectService } from './services/project-service';
 import { PublishingService } from './services/publishing-service';
 import { DEFAULT_WORKSPACE, patchStudioSettings, readStudioSettings } from './services/studio-settings';
 import { asYoutubeError } from './services/youtube-error';
+import { YoutubePublishStore } from './services/youtube-publish-store';
+import { YoutubePublishingService } from './services/youtube-publishing-service';
+import { CompetitorObservationService } from './services/competitor-observation-service';
+import { CompetitorService } from './services/competitor-service';
+import { createCompetitorApi, listPublicVideos, listUploadIds, lookupPublicChannel } from './services/competitor-youtube';
 import { YoutubeService } from './services/youtube-service';
 import { youtubeSyncSettingsSchema } from '../../shared/schema/youtube';
 import { dueAtFor7d } from '../../shared/analytics';
@@ -56,13 +62,14 @@ const publishingService = new PublishingService(
   (projectId, preset) => analyticsService.has7d(projectId, preset),
   (id) => libraryService.getAudio(id),
 );
+const youtubeBox = {
+  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (plain: string) => safeStorage.encryptString(plain),
+  decrypt: (cipher: Buffer) => safeStorage.decryptString(cipher),
+};
 const youtubeService = new YoutubeService({
   directory: app.getPath('userData'),
-  box: {
-    available: () => safeStorage.isEncryptionAvailable(),
-    encrypt: (plain) => safeStorage.encryptString(plain),
-    decrypt: (cipher) => safeStorage.decryptString(cipher),
-  },
+  box: youtubeBox,
   openExternal: (url) => shell.openExternal(url),
   analytics: analyticsService,
   hasWorkspace: () => Boolean(projectService.getWorkspace()),
@@ -74,10 +81,75 @@ const youtubeService = new YoutubeService({
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send('youtube:progress', progress);
   },
 });
+const youtubePublishStore = new YoutubePublishStore(() => analyticsService.db());
+const youtubePublishingService = new YoutubePublishingService({
+  directory: app.getPath('userData'),
+  box: youtubeBox,
+  analytics: analyticsService,
+  publishing: publishingService,
+  auth: youtubeService.auth,
+  youtubeStore: youtubeService.store,
+  publishStore: youtubePublishStore,
+  loadProject: (id) => projectService.loadProject(id),
+  saveProject: async (project) => {
+    const saved = await projectService.saveProject(project);
+    analyticsService.syncProject(saved);
+    return saved;
+  },
+  workspace: () => projectService.getWorkspace(),
+  openExternal: (url) => shell.openExternal(url),
+  onProgress: (progress) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('youtube-publish:progress', progress);
+  },
+});
+let competitorService: CompetitorService;
+const competitorApi = createCompetitorApi({
+  token: (force) => youtubeService.auth.accessToken(force),
+  charge: () => competitorService.spend(),
+});
+const observationService = new CompetitorObservationService({
+  database: () => analyticsService.db(),
+  competitors: () => competitorService,
+});
+competitorService = new CompetitorService({
+  database: () => analyticsService.db(),
+  hooks: observationService.hooks,
+  onProgress: (view) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('competitors:sync-progress', view);
+  },
+  port: {
+    connected: async () => {
+      const state = await youtubeService.auth.state();
+      return state.connected && state.canRead && !state.needsReauth;
+    },
+    ownChannelId: () => {
+      try {
+        return youtubeService.store.channel()?.channelId;
+      } catch {
+        return undefined;
+      }
+    },
+    priorityBusy: () => {
+      if (youtubeService.reading()) return true;
+      try {
+        return youtubePublishStore.pendingJobs().some((job) =>
+          job.operationState === 'uploading' || job.operationState === 'processing' || job.operationState === 'verifying',
+        );
+      } catch {
+        return false;
+      }
+    },
+    lookup: (parsed, signal) => lookupPublicChannel(competitorApi, parsed, signal),
+    uploadsPage: (playlistId, pageToken, signal) => listUploadIds(competitorApi, playlistId, pageToken, signal),
+    videos: (ids, signal) => listPublicVideos(competitorApi, ids, signal),
+    openExternal: (url) => shell.openExternal(url),
+  },
+});
 const aiService = new AiService();
 const exportService = new ExportService(
   () => projectService.getWorkspace(),
   libraryService,
+  (record) => analyticsService.freezePublishedExport(record),
 );
 
 const mediaContentType = (filePath: string): string => {
@@ -223,9 +295,11 @@ const registerIpc = (): void => {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     youtubeService.cancelSync();
+    competitorService.cancel();
     await projectService.setWorkspace(result.filePaths[0]);
     libraryService.initialize();
     analyticsService.initialize();
+    competitorService.onWorkspaceChange();
     publishingService.initialize();
     return result.filePaths[0];
   });
@@ -399,6 +473,20 @@ const registerIpc = (): void => {
     await writeFile(result.filePath, analyticsService.csv(), 'utf8');
     return result.filePath;
   });
+  ipcMain.handle('analytics:youtube-export', async (_event, kind: 'csv' | 'json') => {
+    const result = await dialog.showSaveDialog({
+      title: kind === 'json' ? 'YouTube分析をJSONで書き出す' : 'YouTube分析をCSVで書き出す',
+      defaultPath: `cv-youtube-${new Date().toISOString().slice(0, 10)}.${kind === 'json' ? 'json' : 'csv'}`,
+      filters: [{ name: kind === 'json' ? 'JSON' : 'CSV', extensions: [kind === 'json' ? 'json' : 'csv'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, analyticsService.youtubeExport(kind === 'json' ? 'json' : 'csv'), 'utf8');
+    return result.filePath;
+  });
+  ipcMain.handle('youtube:manual', (_event, input) => analyticsService.saveManualMetric(input));
+  ipcMain.handle('analytics:link-posts', (_event, input: { experimentId: string; postIds: string[]; windowKind: 'publish-calendar-7d' | 'publish-calendar-28d' }) =>
+    analyticsService.linkPostsToExperiment(input.experimentId, input.postIds ?? [], input.windowKind),
+  );
   const finishPublishing = async (
     result: { project: Project; view: PublishingView },
   ): Promise<{ project: Project; view: PublishingView }> => {
@@ -489,12 +577,75 @@ const registerIpc = (): void => {
       youtubeService.setClient(clientId, typeof clientSecret === 'string' ? clientSecret : undefined),
     );
   });
-  ipcMain.handle('youtube:connect', () => youtube(() => youtubeService.connect()));
+  ipcMain.handle('youtube:connect', (_event, mode?: unknown) =>
+    youtube(() => youtubeService.connect(mode === 'publish' ? 'publish' : 'read')),
+  );
   ipcMain.handle('youtube:cancel-login', () => youtubeService.cancelLogin());
   ipcMain.handle('youtube:disconnect', () => youtube(() => youtubeService.disconnect()));
+  ipcMain.handle('youtube:disconnect-local', () => youtube(() => youtubeService.disconnectLocal()));
+  ipcMain.handle('youtube-publish:get', (_event, projectId: unknown, taskId: unknown) => {
+    if (typeof projectId !== 'string' || typeof taskId !== 'string') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.view(projectId, taskId));
+  });
+  ipcMain.handle('youtube-publish:create-draft', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.createDraft(input)),
+  );
+  ipcMain.handle('youtube-publish:update-draft', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.updateDraft(input)),
+  );
+  ipcMain.handle('youtube-publish:start-upload', (_event, jobId: unknown, revision: unknown) => {
+    if (typeof jobId !== 'string' || typeof revision !== 'number') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.startUpload(jobId, revision));
+  });
+  ipcMain.handle('youtube-publish:reupload', (_event, jobId: unknown, revision: unknown) => {
+    if (typeof jobId !== 'string' || typeof revision !== 'number') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.reupload(jobId, revision));
+  });
+  ipcMain.handle('youtube-publish:pause-upload', (_event, jobId: unknown) => {
+    if (typeof jobId !== 'string') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.pauseUpload(jobId));
+  });
+  ipcMain.handle('youtube-publish:resume-upload', (_event, jobId: unknown, revision: unknown) => {
+    if (typeof jobId !== 'string' || typeof revision !== 'number') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.resumeUpload(jobId, revision));
+  });
+  ipcMain.handle('youtube-publish:retry-step', (_event, jobId: unknown, revision: unknown, step: unknown) => {
+    if (typeof jobId !== 'string' || typeof revision !== 'number' || (step !== 'thumbnail' && step !== 'playlist')) {
+      throw new Error('再実行の指定が不正です');
+    }
+    return youtube(() => youtubePublishingService.retryStep(jobId, revision, step));
+  });
+  ipcMain.handle('youtube-publish:open-studio', (_event, jobId: unknown) => {
+    if (typeof jobId !== 'string') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.openStudio(jobId));
+  });
+  ipcMain.handle('youtube-publish:confirm-studio', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.confirmStudioItem(input)),
+  );
+  ipcMain.handle('youtube-publish:refresh', (_event, jobId: unknown) => {
+    if (typeof jobId !== 'string') throw new Error('ジョブの指定が不正です');
+    return youtube(() => youtubePublishingService.refreshRemoteState(jobId));
+  });
+  ipcMain.handle('youtube-publish:preview-change', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.previewPublicationChange(input)),
+  );
+  ipcMain.handle('youtube-publish:apply-change', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.applyPublicationChange(input)),
+  );
+  ipcMain.handle('youtube-publish:bind-preview', (_event, jobId: unknown, videoId: unknown) => {
+    if (typeof jobId !== 'string' || typeof videoId !== 'string') throw new Error('動画IDの指定が不正です');
+    return youtube(() => youtubePublishingService.bindPreview(jobId, videoId));
+  });
+  ipcMain.handle('youtube-publish:bind', (_event, input: unknown) =>
+    youtube(() => youtubePublishingService.bindManualVideo(input)),
+  );
+  ipcMain.handle('youtube-publish:playlists', () => youtube(() => youtubePublishingService.listPlaylists()));
+  ipcMain.handle('youtube-publish:categories', () => youtube(() => youtubePublishingService.listCategories()));
   ipcMain.handle('youtube:set-settings', (_event, patch: unknown) =>
     youtube(() => youtubeService.setSettings(youtubeSyncSettingsSchema.partial().parse(patch))),
   );
+  ipcMain.handle('youtube:analysis-index', () => analyticsService.analysisIndex());
+  ipcMain.handle('youtube:post-view', (_event, postId: string) => analyticsService.postView(postId));
   ipcMain.handle('youtube:sync', () => youtube(() => youtubeService.startSync('manual')));
   ipcMain.handle('youtube:cancel-sync', () => youtubeService.cancelSync());
   ipcMain.handle('ai:status', () => aiService.status());
@@ -509,6 +660,55 @@ const registerIpc = (): void => {
     aiService.cancel();
   });
   ipcMain.handle('ai:parse-handoff', (_event, request: unknown) => aiService.parseHandoff(request));
+  ipcMain.handle('competitors:preview', (_event, input: unknown) => competitorService.preview(input));
+  ipcMain.handle('competitors:confirm', (_event, input: unknown) => competitorService.confirm(input));
+  ipcMain.handle('competitors:list', () => competitorService.list());
+  ipcMain.handle('competitors:detail', (_event, id: unknown) =>
+    competitorService.detail(typeof id === 'string' ? id : ''),
+  );
+  ipcMain.handle('competitors:update', (_event, input: unknown) => competitorService.updateSettings(input));
+  ipcMain.handle('competitors:archive', (_event, id: unknown) =>
+    competitorService.archive(typeof id === 'string' ? id : ''),
+  );
+  ipcMain.handle('competitors:remove', (_event, input: unknown) => competitorService.remove(input));
+  ipcMain.handle('competitors:sync', (_event, input: unknown) => competitorService.sync(input));
+  ipcMain.handle('competitors:cancel', () => competitorService.cancel());
+  ipcMain.handle('competitors:status', () => competitorService.syncStatus());
+  ipcMain.handle('competitors:overview', () => {
+    const channels = competitorService.list();
+    if (!channels.ok) return channels;
+    const sync = competitorService.syncStatus();
+    if (!sync.ok) return sync;
+    const observation = observationService.summary();
+    if (!observation.ok) return observation;
+    return { ok: true, data: { channels: channels.data, sync: sync.data, observation: observation.data } };
+  });
+  ipcMain.handle('competitors:references', (_event, ids: unknown) => observationService.referenceState(ids));
+  ipcMain.handle('competitors:classify', (_event, input: unknown) => competitorService.classify(input));
+  ipcMain.handle('competitors:open', (_event, input: unknown) => competitorService.openExternal(input));
+  ipcMain.handle('competitors:global', (_event, input: unknown) => competitorService.updateGlobal(input));
+  ipcMain.handle('competitors:videos', (_event, query: unknown) => observationService.videos(query));
+  ipcMain.handle('competitors:jots:list', (_event, query: unknown) => observationService.jots(query));
+  ipcMain.handle('competitors:jots:save', (_event, input: unknown) => observationService.saveJot(input));
+  ipcMain.handle('competitors:jots:remove', (_event, id: unknown) => observationService.removeJot(id));
+  ipcMain.handle('competitors:jots:hand-off', (_event, input: unknown) => observationService.handOff(input));
+  ipcMain.handle('competitors:profile:matrix', (_event, input: unknown) => observationService.profileMatrix(input));
+  ipcMain.handle('competitors:profile:save', (_event, input: unknown) => observationService.saveProfile(input));
+  ipcMain.handle('competitors:profile:options', () => observationService.profileOptions());
+  ipcMain.handle('competitors:tags:list', () => observationService.tags());
+  ipcMain.handle('competitors:tags:save', (_event, input: unknown) => observationService.saveTag(input));
+  ipcMain.handle('competitors:tags:archive', (_event, id: unknown) => observationService.archiveTag(id));
+  ipcMain.handle('competitors:tags:assign', (_event, input: unknown) => observationService.assignTag(input));
+  ipcMain.handle('competitors:tags:unassign', (_event, input: unknown) => observationService.unassignTag(input));
+  ipcMain.handle('competitors:focus:add-urls', (_event, input: unknown) => observationService.addFocusUrls(input));
+  ipcMain.handle('competitors:focus:set', (_event, input: unknown) => observationService.setFocus(input));
+  ipcMain.handle('competitors:feature-ideas', async (_event, input: unknown) => {
+    const prepared = observationService.featureIdeaInput(input);
+    if (!prepared.ok) return prepared;
+    const ideas = await aiService.featureIdeas(prepared.data.sent);
+    if (!ideas.ok) return ideas;
+    return { ok: true, data: observationService.resolveIdeas(ideas.data, prepared.data) };
+  });
 };
 
 app.whenReady().then(async () => {
@@ -516,6 +716,7 @@ app.whenReady().then(async () => {
   if (projectService.getWorkspace()) {
     libraryService.initialize();
     analyticsService.initialize();
+    competitorService.onWorkspaceChange();
     publishingService.initialize();
   }
   protocol.handle('studio-media', async (request) => {
@@ -532,9 +733,16 @@ app.whenReady().then(async () => {
   });
   registerIpc();
   createWindow();
-  setTimeout(() => {
+  const catchUpYoutube = (): void => {
     youtubeService.syncOnStartup().catch(() => undefined);
-  }, 5_000);
+    youtubePublishingService.reconcilePendingJobs().catch(() => undefined);
+  };
+  setTimeout(catchUpYoutube, 5_000);
+  competitorService.arm();
+  setTimeout(() => {
+    void competitorService.catchUp();
+  }, 20_000);
+  powerMonitor.on('resume', catchUpYoutube);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

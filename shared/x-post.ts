@@ -1,10 +1,5 @@
 import twitterText from 'twitter-text';
-import {
-  buildTrackingUrl,
-  isClutchVaultUrl,
-  provisionalBasename,
-  type DeliveryPresetId,
-} from './delivery-presets';
+import { isClutchVaultUrl, type DeliveryPresetId } from './delivery-presets';
 import type { Project } from './schema/project';
 
 /** X の無料枠。画像添付はカウントしない。 */
@@ -15,6 +10,16 @@ export const X_HOOK_SOFT_LIMIT = { ja: 20, en: 60 } as const;
 
 export const X_POST_LINEUP_LABEL = '試合用画像 / Lineup';
 export const X_POST_WATCH_LABEL = '投げ方動画 / Watch';
+export const X_POST_HASHTAGS = '#VAROLANT #定点';
+
+const xSideLabel = (side: Project['lineup']['side']): string => (side === 'attack' ? 'Attacker' : 'Defender');
+
+/** 投稿の1行目。例: 【Corrode A / Phoenix / Attacker】 */
+export const xPostHeading = (project: Project): string => {
+  const place = `${project.lineup.map.trim()} ${project.lineup.site}`.trim();
+  const agent = project.lineup.agent.trim();
+  return `【${[place, agent, xSideLabel(project.lineup.side)].filter(Boolean).join(' / ')}】`;
+};
 
 const LANDING_PATHS = new Set(['/', '/en']);
 const LIST_PATHS = new Set(['/lineups', '/en/lineups']);
@@ -143,54 +148,36 @@ export const videoProblem = (value: string): string | null => {
   return null;
 };
 
-const xBasename = (project: Project, now: Date, override?: string): string => {
-  const given = override?.trim();
-  if (given) return given;
-  const fromLink = project.publishing.links['x-jp'];
-  if (fromLink) {
-    try {
-      const content = new URL(fromLink).searchParams.get('utm_content');
-      if (content) return content;
-    } catch {
-      // 保存済みリンクが URL でないときは命名規則から組む。
-    }
+/** 投稿文の定点URLから utm_* だけ外す。他のクエリとハッシュは残す。 */
+export const xPostSpotUrl = (value: string): string => {
+  const url = parseHttpUrl(value);
+  if (!url) return '';
+  for (const key of [...url.searchParams.keys()]) {
+    if (key.toLowerCase().startsWith('utm_')) url.searchParams.delete(key);
   }
-  return provisionalBasename({
-    plannedPostDate: project.plannedPostDate,
-    map: project.lineup.map,
-    agent: project.lineup.agent,
-    slot: 'x',
-    now,
-  });
+  return url.toString();
 };
 
-/**
- * 既存の X カード計測を付ける。
- * utm_source=x / utm_medium=card / utm_campaign は実験設定 / utm_content は書き出し名。
- * 同じキーは置き換え、動画URLには付けない。
- */
-export const xTrackingUrl = (project: Project, spotUrl: string, basename: string): string =>
-  buildTrackingUrl({
-    presetId: 'x-jp',
-    basename,
-    campaign: project.experiment.utmCampaign,
-    base: spotUrl.trim(),
-  });
-
 export const assembleXPost = (input: {
+  heading: string;
   ja: string;
   en: string;
   spotUrl: string;
   videoUrl: string;
 }): string =>
   [
+    input.heading,
+    '',
     normalizeHook(input.ja),
     normalizeHook(input.en),
     '',
     X_POST_LINEUP_LABEL,
     input.spotUrl,
+    '',
     X_POST_WATCH_LABEL,
     input.videoUrl,
+    '',
+    X_POST_HASHTAGS,
   ].join('\n');
 
 export const weighXPost = (
@@ -217,18 +204,16 @@ export type XPostPreview = {
   videoUrl: string;
 };
 
-export const prepareXPost = (project: Project, options?: { basename?: string; now?: Date }): XPostPreview => {
-  const now = options?.now ?? new Date();
+export const prepareXPost = (project: Project): XPostPreview => {
   const ja = normalizeHook(project.publishing.xPost.ja);
   const en = normalizeHook(project.publishing.xPost.en);
   const spotInput = xSpotInput(project);
   const videoInput = xVideoInput(project);
   const spotIssue = spotProblem(spotInput);
   const videoIssue = videoProblem(videoInput);
-  const basename = xBasename(project, now, options?.basename);
-  const spotUrl = spotIssue ? '' : xTrackingUrl(project, spotInput, basename);
+  const spotUrl = spotIssue ? '' : xPostSpotUrl(spotInput);
   const videoUrl = videoIssue ? '' : videoInput.trim();
-  const text = assembleXPost({ ja, en, spotUrl, videoUrl });
+  const text = assembleXPost({ heading: xPostHeading(project), ja, en, spotUrl, videoUrl });
   const count = weighXPost(text);
   const problems: string[] = [];
   if (!ja) problems.push('日本語フックが空です');

@@ -13,8 +13,21 @@ import {
   fitThumbnailLabel,
   hookFrameRequest,
   thumbnailHookLayout,
+  thumbnailHookLines,
   thumbnailMapLabel,
 } from '../shared/thumbnail';
+import {
+  THUMB_FOCUS,
+  fitFocusHook,
+  focusFrameSize,
+  resolveFocusFrame,
+  resolveThumbCrop,
+  resolveThumbHookText,
+  thumbnailFocusOf,
+  thumbnailLayoutOf,
+  thumbnailZoomOf,
+  type ThumbHookRun,
+} from '../shared/thumbnail-focus';
 import {
   catalogMediaRelativePath,
   getAbilityCardIconPath,
@@ -57,6 +70,7 @@ export const ThumbnailIdentityBadge = ({
   site,
   side,
   mediaBaseUrl,
+  top = THUMBNAIL.badgeTop,
 }: {
   agent: string;
   ability: string;
@@ -64,6 +78,7 @@ export const ThumbnailIdentityBadge = ({
   site: string;
   side: 'attack' | 'defense';
   mediaBaseUrl: string;
+  top?: number;
 }): ReactNode => {
   const agentIcon = getAgentCardIconPath(agent);
   const abilityIcon = getAbilityCardIconPath(agent, ability);
@@ -78,7 +93,7 @@ export const ThumbnailIdentityBadge = ({
     <div
       style={{
         position: 'absolute',
-        top: THUMBNAIL.badgeTop,
+        top,
         left: 0,
         width: THUMBNAIL.width,
         height: THUMBNAIL.badgeHeight,
@@ -215,7 +230,7 @@ const FOOTAGE_STYLE: CSSProperties = {
   objectFit: 'cover',
 };
 
-export const LineupThumbnail = ({
+const LineupThumbnailClassic = ({
   project,
   language,
   mediaBaseUrl,
@@ -227,8 +242,9 @@ export const LineupThumbnail = ({
   const hook = project.captions.find((caption) => caption.id === 'hook');
   const hookRaw = hook && !hook.hidden ? captionTextFor(hook, language, 'thumb') : '';
   const hookText = hookRaw ? resolveVariables(hookRaw, project, language) : '';
-  const hookLayout = thumbnailHookLayout(hookText);
   const hookFontSize = fitThumbnailHookFontSize(hookText);
+  const hookLayout = thumbnailHookLayout(hookText, hookFontSize);
+  const hookLines = thumbnailHookLines(hookText);
   const request = hookFrameRequest(project);
   const asset = request ? project.assets.find((item) => item.path === request.assetPath) : undefined;
   const mediaPath = (relativePath: string): string => {
@@ -263,7 +279,7 @@ export const LineupThumbnail = ({
   return (
     <AbsoluteFill style={{ background: '#2B2522', overflow: 'hidden' }}>
       {layer(BLUR_STYLE)}
-      {hookText ? (
+      {hookLines.some((line) => line.trim()) ? (
         <div
           style={{
             position: 'absolute',
@@ -271,6 +287,7 @@ export const LineupThumbnail = ({
             left: THUMBNAIL.hookSide,
             right: THUMBNAIL.hookSide,
             maxHeight: hookLayout.maxHeight,
+            overflow: 'hidden',
             textAlign: 'center',
             fontFamily: 'Montserrat, "Zen Kaku Gothic New", sans-serif',
             fontWeight: 900,
@@ -278,18 +295,21 @@ export const LineupThumbnail = ({
             lineHeight: THUMBNAIL.hookLineHeight,
             textTransform: 'uppercase',
             color: '#FFFFFF',
-            whiteSpace: 'pre-line',
-            wordBreak: 'keep-all',
-            overflowWrap: 'anywhere',
-            lineBreak: 'strict',
-            display: '-webkit-box',
-            WebkitLineClamp: hookLayout.maxLines,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
             textShadow: '0 2px 18px rgba(0,0,0,0.65)',
           }}
         >
-          <AccentText accent={accent}>{hookText}</AccentText>
+          {hookLines.map((line, index) => (
+            <div
+              key={`hook-${index}`}
+              style={{
+                wordBreak: 'keep-all',
+                overflowWrap: 'anywhere',
+                lineBreak: 'strict',
+              }}
+            >
+              {line ? <AccentText accent={accent}>{line}</AccentText> : '\u00a0'}
+            </div>
+          ))}
         </div>
       ) : null}
       <div
@@ -316,3 +336,169 @@ export const LineupThumbnail = ({
     </AbsoluteFill>
   );
 };
+
+const FocusHook = ({
+  lines,
+  fontSize,
+  lineHeight,
+  family,
+  accent,
+}: {
+  lines: ThumbHookRun[][];
+  fontSize: number;
+  lineHeight: number;
+  family: string;
+  accent: string;
+}): ReactNode => {
+  const lineBox = fontSize * lineHeight;
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: THUMB_FOCUS.hook.top,
+        left: THUMB_FOCUS.hook.left,
+        width: THUMB_FOCUS.hook.right - THUMB_FOCUS.hook.left,
+        height: lineBox * lines.length,
+        overflow: 'visible',
+        textAlign: 'center',
+        fontFamily: family,
+        fontWeight: 900,
+        fontSize,
+        lineHeight,
+        color: '#FFFFFF',
+        WebkitTextStroke: `${THUMB_FOCUS.hook.stroke.outside * 2}px ${THUMB_FOCUS.hook.stroke.color}`,
+        paintOrder: 'stroke fill',
+        textShadow: THUMB_FOCUS.hook.shadow,
+      }}
+    >
+      {lines.map((line, index) => (
+        <div key={`hook-${index}`} style={{ height: lineBox, whiteSpace: 'nowrap' }}>
+          {line.length === 0
+            ? '\u00a0'
+            : line.map((run, runIndex) =>
+                run.accent ? (
+                  <span key={`${index}-${runIndex}`} style={{ color: accent }}>
+                    {run.text}
+                  </span>
+                ) : (
+                  <Fragment key={`${index}-${runIndex}`}>{run.text}</Fragment>
+                ),
+              )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const LineupThumbnailFocus = ({
+  project,
+  language,
+  mediaBaseUrl,
+  hookFrame,
+}: LineupShortProps & { hookFrame?: string }): ReactNode => {
+  const { fps } = useVideoConfig();
+  const accent = project.templateParams.accent;
+  const hookFit = fitFocusHook(resolveThumbHookText(project, language), language);
+  const hookSpec = language === 'en' ? THUMB_FOCUS.hook.en : THUMB_FOCUS.hook.ja;
+  const pick = resolveFocusFrame(project);
+  const asset = pick ? project.assets.find((item) => item.id === pick.assetId) : undefined;
+  const size = focusFrameSize(project);
+  const crop = size ? resolveThumbCrop(size, thumbnailFocusOf(project), thumbnailZoomOf(project)) : null;
+  const extracted = hookFrame ? assetUrl(mediaBaseUrl, hookFrame) : null;
+  const originalPath = asset ? assetUrl(mediaBaseUrl, asset.path) : null;
+  const imageSrc = extracted ?? (asset?.type === 'image' ? originalPath : null);
+  const videoSrc = !imageSrc && asset?.type === 'video' ? originalPath : null;
+  const startFrom = videoSrc && pick ? Math.max(0, Math.round(pick.timeSec * fps)) : 0;
+  const placed = crop
+    ? {
+        width: (size!.w * THUMB_FOCUS.video.w) / crop.w,
+        height: (size!.h * THUMB_FOCUS.video.h) / crop.h,
+        left: (-crop.x * THUMB_FOCUS.video.w) / crop.w,
+        top: (-crop.y * THUMB_FOCUS.video.h) / crop.h,
+      }
+    : null;
+  const pictureStyle: CSSProperties = placed
+    ? {
+        position: 'absolute',
+        width: placed.width,
+        height: placed.height,
+        left: placed.left,
+        top: placed.top,
+        filter: `contrast(${THUMB_FOCUS.grade.contrast}) saturate(${THUMB_FOCUS.grade.saturate})`,
+      }
+    : { ...FOOTAGE_STYLE, filter: `contrast(${THUMB_FOCUS.grade.contrast}) saturate(${THUMB_FOCUS.grade.saturate})` };
+  const layer = (style: CSSProperties): ReactNode => {
+    if (imageSrc) return <Img src={imageSrc} style={style} />;
+    if (videoSrc) {
+      return <OffthreadVideo src={videoSrc} startFrom={startFrom} endAt={startFrom + 1} volume={0} style={style} />;
+    }
+    return null;
+  };
+  const fade = THUMB_FOCUS.videoTopFade.to - THUMB_FOCUS.videoTopFade.from;
+  const stops = THUMB_FOCUS.topGradient.stops
+    .map(([offset, alpha]) => `rgba(15,25,35,${alpha}) ${offset}px`)
+    .join(', ');
+
+  return (
+    <AbsoluteFill style={{ background: '#2B2522', overflow: 'hidden' }}>
+      {layer(BLUR_STYLE)}
+      <div
+        style={{
+          position: 'absolute',
+          top: THUMB_FOCUS.video.y,
+          left: THUMB_FOCUS.video.x,
+          width: THUMB_FOCUS.video.w,
+          height: THUMB_FOCUS.video.h,
+          overflow: 'hidden',
+          background: '#111418',
+          WebkitMaskImage: `linear-gradient(to bottom, transparent 0px, #000 ${fade}px)`,
+          maskImage: `linear-gradient(to bottom, transparent 0px, #000 ${fade}px)`,
+        }}
+      >
+        {layer(pictureStyle)}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: `radial-gradient(ellipse ${THUMB_FOCUS.vignette.rx * 100}% ${THUMB_FOCUS.vignette.ry * 100}% at ${THUMB_FOCUS.vignette.cx * 100}% ${THUMB_FOCUS.vignette.cy * 100}%, transparent ${THUMB_FOCUS.vignette.inner * 100}%, rgba(15,25,35,${THUMB_FOCUS.vignette.alpha}) 100%)`,
+          }}
+        />
+      </div>
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: THUMB_FOCUS.canvas.w,
+          height: THUMB_FOCUS.topGradient.stops[THUMB_FOCUS.topGradient.stops.length - 1]?.[0] ?? 730,
+          background: `linear-gradient(to bottom, ${stops})`,
+        }}
+      />
+      {hookFit.lines.length > 0 ? (
+        <FocusHook
+          lines={hookFit.lines.slice(0, THUMB_FOCUS.hook.maxLines)}
+          fontSize={hookFit.fontSize}
+          lineHeight={hookSpec.lineHeight}
+          family={`${hookSpec.family}, sans-serif`}
+          accent={accent}
+        />
+      ) : null}
+      <ThumbnailIdentityBadge
+        agent={project.lineup.agent}
+        ability={project.lineup.ability}
+        map={project.lineup.map}
+        site={project.lineup.site}
+        side={project.lineup.side}
+        mediaBaseUrl={mediaBaseUrl}
+        top={THUMB_FOCUS.infoBar.y}
+      />
+    </AbsoluteFill>
+  );
+};
+
+export const LineupThumbnail = (props: LineupShortProps & { hookFrame?: string }): ReactNode =>
+  thumbnailLayoutOf(props.project) === 'focus' ? (
+    <LineupThumbnailFocus {...props} />
+  ) : (
+    <LineupThumbnailClassic {...props} />
+  );

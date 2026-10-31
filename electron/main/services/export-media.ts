@@ -9,6 +9,7 @@ import ffmpegPathImport from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 import type { CardFrameSlot } from '../../../shared/export-media';
 import { hookFrameRequest } from '../../../shared/thumbnail';
+import { resolveFocusFrame, thumbnailLayoutOf } from '../../../shared/thumbnail-focus';
 import {
   cardFrameRequests,
   mezzanineDimensions,
@@ -162,15 +163,25 @@ export const prepareExportMedia = async ({
     'export-frames',
   );
   if (thumbnail) {
-    const request = hookFrameRequest(project);
-    if (request?.kind === 'image') {
+    const focus = thumbnailLayoutOf(project) === 'focus';
+    const focusPick = focus ? resolveFocusFrame(project) : null;
+    const request = focus
+      ? null
+      : hookFrameRequest(project);
+    const focusAsset = focusPick ? project.assets.find((item) => item.id === focusPick.assetId) : undefined;
+    if (focus && focusAsset?.type === 'image') {
+      hookFrame = focusAsset.path;
+    } else if (!focus && request?.kind === 'image') {
       hookFrame = request.assetPath;
-    } else if (request?.kind === 'video') {
-      const absolute = resolveWorkspaceFile(workspace, request.assetPath);
-      if (!absolute) throw new Error(`素材ファイルが見つかりません: ${request.assetPath}`);
+    } else if ((focus && focusAsset?.type === 'video' && focusPick) || (!focus && request?.kind === 'video')) {
+      const assetPath = focus && focusAsset ? focusAsset.path : request && request.kind === 'video' ? request.assetPath : '';
+      const sourceTime = focus && focusPick ? focusPick.timeSec : request && request.kind === 'video' ? request.sourceTime : 0;
+      const absolute = resolveWorkspaceFile(workspace, assetPath);
+      if (!absolute) throw new Error(`素材ファイルが見つかりません: ${assetPath}`);
       const stat = await fs.stat(absolute);
+      const variant = focus ? 'focus-native-v1' : 'thumb-1920-v1';
       const key = createHash('sha1')
-        .update(`${absolute}|${stat.mtimeMs}|${stat.size}|${request.sourceTime.toFixed(3)}|thumb-1920-v1`)
+        .update(`${absolute}|${stat.mtimeMs}|${stat.size}|${sourceTime.toFixed(3)}|${variant}`)
         .digest('hex')
         .slice(0, 20);
       await fs.mkdir(frameDirectory, { recursive: true });
@@ -178,7 +189,8 @@ export const prepareExportMedia = async ({
       try {
         await fs.access(output);
       } catch {
-        await extractThumbnailStill(absolute, request.sourceTime, output);
+        if (focus) await extractAccurateStill(absolute, sourceTime, output);
+        else await extractThumbnailStill(absolute, sourceTime, output);
       }
       hookFrame = relativeTo(workspace, output);
       relativePaths.push(hookFrame);

@@ -1,5 +1,4 @@
 import twitterText from 'twitter-text';
-import { buildTrackingUrl } from '../shared/delivery-presets';
 import { guessBasename } from '../shared/export-copy';
 import { followPublishing } from '../shared/guide';
 import { createDefaultProject, parseProject, type Project } from '../shared/schema/project';
@@ -10,7 +9,8 @@ import {
   prepareXPost,
   videoHookText,
   weighXPost,
-  xTrackingUrl,
+  xPostHeading,
+  X_POST_HASHTAGS,
   X_WEIGHTED_LIMIT,
 } from '../shared/x-post';
 
@@ -20,7 +20,7 @@ const fail = (message: string): never => {
 };
 
 const now = new Date('2026-10-11T00:00:00.000Z');
-const basename = '20261011_Ascent_Phoenix_std_x_v1';
+const basename = '20261011_Ascent_A_Phoenix_lineup_x_v1';
 const spot = 'https://gg.clutchvault.app/lineups/phoenix?note=1&utm_source=old&utm_source=dup#aim';
 const video = 'https://youtube.com/shorts/dQw4w9WgXcQ?t=12';
 
@@ -52,40 +52,45 @@ if (weighXPost(longUrl).weightedLength !== 23) fail(`long url weighed ${weighXPo
 if (weighXPost(`${longUrl}\n${longUrl}`).weightedLength !== 47) fail('two urls should be 23 each plus the break');
 
 const project = readyProject();
-const prepared = prepareXPost(project, { basename, now });
+const prepared = prepareXPost(project);
 const lines = prepared.text.split('\n');
-if (lines.length !== 7) fail(`template lines ${lines.length}: ${prepared.text}`);
-if (lines[0] !== 'あ' || lines[1] !== 'Hold the angle' || lines[2] !== '') fail('hook block');
-if (lines[3] !== '試合用画像 / Lineup' || lines[5] !== '投げ方動画 / Watch') fail('labels');
-if (lines[6] !== video) fail(`video url changed ${lines[6]}`);
-if (lines[6].includes('utm_')) fail('video url gained utm');
-if (prepared.text !== assembleXPost({ ja: 'あ', en: 'Hold the angle', spotUrl: prepared.spotUrl, videoUrl: video })) {
+if (lines.length !== 12) fail(`template lines ${lines.length}: ${prepared.text}`);
+if (lines[0] !== '【Ascent A / Phoenix / Defender】' || lines[0] !== xPostHeading(project)) fail(`heading ${lines[0]}`);
+if (lines[1] !== '' || lines[4] !== '' || lines[7] !== '' || lines[10] !== '') fail('blank lines');
+if (lines[2] !== 'あ' || lines[3] !== 'Hold the angle') fail('hook block');
+if (lines[5] !== '試合用画像 / Lineup' || lines[8] !== '投げ方動画 / Watch') fail('labels');
+if (lines[9] !== video) fail(`video url changed ${lines[9]}`);
+if (lines[9].includes('utm_')) fail('video url gained utm');
+if (lines[11] !== X_POST_HASHTAGS) fail(`hashtags ${lines[11]}`);
+if (
+  prepared.text !==
+  assembleXPost({
+    heading: '【Ascent A / Phoenix / Defender】',
+    ja: 'あ',
+    en: 'Hold the angle',
+    spotUrl: prepared.spotUrl,
+    videoUrl: video,
+  })
+) {
   fail('preview and assembled text diverged');
 }
+const attack = readyProject();
+attack.lineup.side = 'attack';
+attack.lineup.map = 'Corrode';
+if (prepareXPost(attack).text.split('\n')[0] !== '【Corrode A / Phoenix / Attacker】') {
+  fail('attack heading');
+}
 if (!prepared.copyable || prepared.text.includes('undefined')) fail('ready post should copy');
-if ((prepared.text.match(/utm_source=/g) ?? []).length !== 1) fail(`utm duplicated ${prepared.spotUrl}`);
-if (!prepared.spotUrl.includes('utm_source=x') || prepared.spotUrl.includes('utm_source=old')) fail(prepared.spotUrl);
-if (!prepared.spotUrl.includes('utm_medium=card')) fail(`medium ${prepared.spotUrl}`);
-if (!prepared.spotUrl.includes('utm_campaign=first_9_lineups')) fail(`campaign ${prepared.spotUrl}`);
-if (!prepared.spotUrl.includes(`utm_content=${basename}`)) fail(`content ${prepared.spotUrl}`);
-if (!prepared.spotUrl.includes('note=1') || !prepared.spotUrl.endsWith('#aim')) fail(`url structure ${prepared.spotUrl}`);
-if (prepared.spotUrl !== xTrackingUrl(project, prepared.spotUrl, basename)) fail('tracking grew a second utm set');
-if (guessBasename(project, 'x-jp', now) !== '20261011_Ascent_Phoenix_std_x_v1') {
+if (/utm_/i.test(prepared.text) || /utm_/i.test(prepared.spotUrl)) fail(`utm remained ${prepared.spotUrl}`);
+if (prepared.spotUrl !== 'https://gg.clutchvault.app/lineups/phoenix?note=1#aim') fail(`url structure ${prepared.spotUrl}`);
+if (guessBasename(project, 'x-jp', now) !== '20261011_Ascent_A_Phoenix_lineup_x_v1') {
   fail(`basename ${guessBasename(project, 'x-jp', now)}`);
 }
-
-const again = buildTrackingUrl({
-  presetId: 'x-jp',
-  basename,
-  campaign: 'first_9_lineups',
-  base: prepared.spotUrl,
-});
-if (again !== prepared.spotUrl) fail(`rebuild changed the url ${again}`);
 
 const padded = (extra: string): ReturnType<typeof prepareXPost> => {
   const next = readyProject();
   next.publishing.xPost.en = extra;
-  return prepareXPost(next, { basename, now });
+  return prepareXPost(next);
 };
 let exact = '';
 for (let count = 0; count < 400; count += 1) {
@@ -109,14 +114,14 @@ const shortVideo = readyProject();
 shortVideo.publishing.xPost.videoUrl = 'https://youtu.be/dQw4w9WgXcQ';
 const longVideo = readyProject();
 longVideo.publishing.xPost.videoUrl = `https://www.youtube.com/watch?v=dQw4w9WgXcQ&${'feature='}${'share'.repeat(40)}`;
-if (prepareXPost(shortVideo, { basename, now }).weightedLength !== prepareXPost(longVideo, { basename, now }).weightedLength) {
+if (prepareXPost(shortVideo).weightedLength !== prepareXPost(longVideo).weightedLength) {
   fail('url length changed the post count');
 }
 
 const broken = readyProject();
 broken.publishing.xPost.videoUrl = 'notaurl';
 broken.publishing.memoUrl = '';
-const incomplete = prepareXPost(broken, { basename, now });
+const incomplete = prepareXPost(broken);
 if (incomplete.copyable) fail('incomplete post was copyable');
 if (incomplete.text.includes('notaurl') || incomplete.text.includes('undefined') || incomplete.text.includes('{')) {
   fail(`placeholder leaked ${incomplete.text}`);
@@ -128,19 +133,19 @@ if (!incomplete.problems.some((problem) => problem.includes('動画URL')) || !in
 const landing = readyProject();
 landing.publishing.memoUrl = 'https://clutchvault.app/en/';
 landing.publishing.xPost.spotDraft = '';
-const landingPost = prepareXPost(landing, { basename, now });
+const landingPost = prepareXPost(landing);
 if (landingPost.copyable || landingPost.text.includes('clutchvault.app') || !landingPost.problems.some((problem) => problem.includes('トップページ'))) {
   fail(`landing page was accepted ${landingPost.problems.join(' / ')}`);
 }
 const list = readyProject();
 list.publishing.memoUrl = 'https://gg.clutchvault.app/lineups';
-const listPost = prepareXPost(list, { basename, now });
+const listPost = prepareXPost(list);
 if (listPost.copyable || !listPost.problems.some((problem) => problem.includes('一覧'))) fail('list page was accepted');
 
 const multiline = readyProject();
 multiline.publishing.xPost.ja = 'あ\nい';
-const flat = prepareXPost(multiline, { basename, now });
-if (flat.text.split('\n')[0] !== 'あ い' || flat.ja !== 'あ い') fail(`newline survived ${flat.ja}`);
+const flat = prepareXPost(multiline);
+if (flat.text.split('\n')[2] !== 'あ い' || flat.ja !== 'あ い') fail(`newline survived ${flat.ja}`);
 if (normalizeHook('  English\r\nline  ') !== 'English line') fail('hook normalize');
 
 const isolated = readyProject();
@@ -155,7 +160,7 @@ isolated.publishing.xPost.ja = '途中 ';
 isolated.publishing.xPost.jaEdited = true;
 const typing = followPublishing(isolated);
 if (typing.publishing.xPost.ja !== '途中 ') fail('trailing space was eaten while typing');
-if (prepareXPost(typing, { basename, now }).text.split('\n')[0] !== '途中') fail('assembled hook kept the trailing space');
+if (prepareXPost(typing).text.split('\n')[2] !== '途中') fail('assembled hook kept the trailing space');
 const hook = kept.captions.find((caption) => caption.id === 'hook');
 if (!hook) fail('hook caption');
 hook.text = { ...hook.text, ja: '動画側を変えた' };
@@ -206,16 +211,16 @@ custom.posts = [
 custom.publishing.xPost.videoUrl = '';
 custom.publishing.xPost.videoUrlEdited = false;
 custom.guide.xReplyVideo = 'youtube';
-const fromYoutube = prepareXPost(custom, { basename, now });
+const fromYoutube = prepareXPost(custom);
 if (fromYoutube.videoUrl !== 'https://youtube.com/shorts/dQw4w9WgXcQ') fail('published youtube url was ignored');
 if (fromYoutube.text.includes('tiktok.com')) fail('both video urls were inserted');
 custom.guide.xReplyVideo = 'tiktok';
-if (prepareXPost(custom, { basename, now }).videoUrl !== 'https://tiktok.com/@h1gher/video/1234567890') {
+if (prepareXPost(custom).videoUrl !== 'https://tiktok.com/@h1gher/video/1234567890') {
   fail('platform switch did not change the single video url');
 }
 custom.publishing.xPost.videoUrl = 'https://example.com/watch';
 custom.publishing.xPost.videoUrlEdited = true;
-if (prepareXPost(custom, { basename, now }).videoUrl !== 'https://example.com/watch') fail('saved video url was overwritten');
+if (prepareXPost(custom).videoUrl !== 'https://example.com/watch') fail('saved video url was overwritten');
 
 const stored = readyProject();
 stored.publishing.xPost.ja = '残す';
@@ -242,7 +247,7 @@ if (restored.publishing.xPost.ja !== '残す' || restored.publishing.xPost.en !=
 const soft = readyProject();
 soft.publishing.xPost.ja = 'あ'.repeat(21);
 soft.publishing.xPost.en = `b${'c'.repeat(60)}`;
-const softPost = prepareXPost(soft, { basename, now });
+const softPost = prepareXPost(soft);
 if (!softPost.copyable) fail('soft hook limits blocked a post that fits');
 
 console.log('x post checks ok');

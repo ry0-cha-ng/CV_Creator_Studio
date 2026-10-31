@@ -9,11 +9,34 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
+export const YOUTUBE_READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+export const YOUTUBE_ANALYTICS_SCOPE = 'https://www.googleapis.com/auth/yt-analytics.readonly';
+export const YOUTUBE_FORCE_SSL_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+export const YOUTUBE_MANAGE_SCOPE = 'https://www.googleapis.com/auth/youtube';
+
 /** Analytics API の reports.query は yt-analytics.readonly に加えて youtube.readonly も必要。 */
-export const YOUTUBE_SCOPES = [
-  'https://www.googleapis.com/auth/youtube.readonly',
-  'https://www.googleapis.com/auth/yt-analytics.readonly',
-] as const;
+export const YOUTUBE_READ_SCOPES = [YOUTUBE_READONLY_SCOPE, YOUTUBE_ANALYTICS_SCOPE] as const;
+export const YOUTUBE_PUBLISH_SCOPES = [YOUTUBE_FORCE_SSL_SCOPE, YOUTUBE_READONLY_SCOPE, YOUTUBE_ANALYTICS_SCOPE] as const;
+export const YOUTUBE_SCOPES = YOUTUBE_READ_SCOPES;
+
+export type YoutubeAuthMode = 'read' | 'publish';
+
+export const parseGrantedScopes = (raw: string | undefined): string[] =>
+  (raw ?? '')
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+
+export const scopeSet = (scopes: readonly string[]): Set<string> => new Set(scopes);
+
+export const hasReadScope = (granted: readonly string[]): boolean => {
+  const set = scopeSet(granted);
+  return set.has(YOUTUBE_READONLY_SCOPE) || set.has(YOUTUBE_FORCE_SSL_SCOPE) || set.has(YOUTUBE_MANAGE_SCOPE);
+};
+
+export const hasPublishScope = (granted: readonly string[]): boolean => scopeSet(granted).has(YOUTUBE_FORCE_SSL_SCOPE);
+
+export const hasAnalyticsScope = (granted: readonly string[]): boolean => scopeSet(granted).has(YOUTUBE_ANALYTICS_SCOPE);
 
 export type SecretBox = {
   available: () => boolean;
@@ -30,6 +53,10 @@ export type AuthState = {
   connected: boolean;
   needsReauth: boolean;
   secureStorage: boolean;
+  grantedScopes: string[];
+  canRead: boolean;
+  canPublish: boolean;
+  canAnalytics: boolean;
 };
 
 const base64Url = (buffer: Buffer): string =>
@@ -106,15 +133,31 @@ export class YoutubeAuth {
     await writeAtomic(this.secretsPath, this.deps.box.encrypt(JSON.stringify(secrets)));
   }
 
+  private capabilities(connected: boolean, grantedScopes: string[]): Pick<AuthState, 'canRead' | 'canPublish' | 'canAnalytics'> {
+    if (!connected) return { canRead: false, canPublish: false, canAnalytics: false };
+    if (grantedScopes.length === 0) {
+      return { canRead: true, canPublish: false, canAnalytics: true };
+    }
+    return {
+      canRead: hasReadScope(grantedScopes),
+      canPublish: hasPublishScope(grantedScopes),
+      canAnalytics: hasAnalyticsScope(grantedScopes),
+    };
+  }
+
   async state(): Promise<AuthState> {
     const config = await this.readConfig();
     const secrets = await this.readSecrets();
+    const grantedScopes = parseGrantedScopes(secrets.scope);
+    const connected = Boolean(secrets.refreshToken);
     return {
       clientId: config.clientId,
       hasClientSecret: Boolean(secrets.clientSecret),
-      connected: Boolean(secrets.refreshToken),
+      connected,
       needsReauth: Boolean(config.needsReauth),
       secureStorage: this.deps.box.available(),
+      grantedScopes,
+      ...this.capabilities(connected, grantedScopes),
     };
   }
 
@@ -139,7 +182,7 @@ export class YoutubeAuth {
   }
 
   /** システムのブラウザで同意画面を開き、127.0.0.1 のループバックで認可コードを受け取る（PKCE）。 */
-  async connect(): Promise<AuthState> {
+  async connect(mode: YoutubeAuthMode = 'read'): Promise<AuthState> {
     const config = await this.readConfig();
     if (!config.clientId) throw new YoutubeError('auth', '先にクライアントIDを保存してください');
     const secrets = await this.readSecrets();
@@ -204,7 +247,7 @@ export class YoutubeAuth {
           client_id: config.clientId,
           redirect_uri: redirectUri,
           response_type: 'code',
-          scope: YOUTUBE_SCOPES.join(' '),
+          scope: (mode === 'publish' ? YOUTUBE_PUBLISH_SCOPES : YOUTUBE_READ_SCOPES).join(' '),
           code_challenge: challenge,
           code_challenge_method: 'S256',
           state,
@@ -227,12 +270,15 @@ export class YoutubeAuth {
     if (secrets.clientSecret) body.set('client_secret', secrets.clientSecret);
     const token = await this.tokenRequest(body);
     if (!token.refresh_token) throw new YoutubeError('auth', 'リフレッシュトークンを受け取れませんでした');
-    const granted = new Set((token.scope ?? '').split(/\s+/));
-    const missing = YOUTUBE_SCOPES.filter((scope) => !granted.has(scope));
+    const granted = parseGrantedScopes(token.scope);
+    const required = mode === 'publish' ? YOUTUBE_PUBLISH_SCOPES : YOUTUBE_READ_SCOPES;
+    const missing = required.filter((scope) => !granted.includes(scope));
     if (missing.length > 0) {
       throw new YoutubeError(
         'permission',
-        '同意画面で「YouTube アカウントの表示」と「YouTube Analytics レポートの表示」の両方にチェックを入れてください',
+        mode === 'publish'
+          ? '投稿するには YouTube の動画の管理と Analytics の表示を許可してください。読み取りだけの接続ではアップロードできません'
+          : '同意画面で「YouTube アカウントの表示」と「YouTube Analytics レポートの表示」の両方にチェックを入れてください',
       );
     }
     await this.writeSecrets({
@@ -272,6 +318,17 @@ export class YoutubeAuth {
     }
   }
 
+  /** このPCのトークンだけ消す。Google側の許可とYouTube上の予約は残る。 */
+  async disconnectLocal(): Promise<AuthState> {
+    const secrets = await this.readSecrets();
+    this.cached = undefined;
+    await this.writeSecrets({ clientSecret: secrets.clientSecret });
+    const config = await this.readConfig();
+    await this.writeConfig({ clientId: config.clientId, needsReauth: false });
+    return this.state();
+  }
+
+  /** このPCのトークンを消し、可能ならGoogle側の許可も取り消す。分析連携も切れる。 */
   async disconnect(): Promise<AuthState> {
     const secrets = await this.readSecrets();
     if (secrets.refreshToken) {
@@ -285,11 +342,7 @@ export class YoutubeAuth {
         // 取り消しに失敗しても、このPCからは消す。
       }
     }
-    this.cached = undefined;
-    await this.writeSecrets({ clientSecret: secrets.clientSecret });
-    const config = await this.readConfig();
-    await this.writeConfig({ clientId: config.clientId, needsReauth: false });
-    return this.state();
+    return this.disconnectLocal();
   }
 
   private async tokenRequest(body: URLSearchParams): Promise<{

@@ -5,6 +5,7 @@
   background: #0f1216;
   color: #e6e8eb;
   font-family: "IBM Plex Sans JP", "Segoe UI", sans-serif;
+  color-scheme: dark;
 }
 
 .an-stage {
@@ -218,6 +219,12 @@
   border-radius: 6px;
   padding: 8px;
   font: inherit;
+  color-scheme: dark;
+}
+.ai-field:has(> input[type='checkbox']) {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
 }
 .ai-paste { min-height: 88px; }
 .ai-help-btn { height: 30px; }
@@ -268,6 +275,35 @@
   border: 1px solid #262c35;
   border-radius: 12px;
 }
+.an-card.is-block {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  text-align: left;
+}
+.an-card.is-block p { margin: 0; }
+.an-card.is-block > button { align-self: flex-start; }
+.an-card.is-block .an-select,
+.an-card.is-block .an-memo { width: 100%; }
+.an-scroll > .an-list {
+  gap: 14px;
+  padding: 0;
+  border-right: 0;
+  overflow: visible;
+}
+.an-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.an-stack p { margin: 0; }
+.an-stack > button { align-self: flex-start; }
+.an-stack .an-select,
+.an-stack .an-memo { width: 100%; }
 
 .an-task {
   padding: 28px;
@@ -590,9 +626,14 @@
   background: #0f1216;
   padding: 0 10px;
   gap: 6px;
+  overflow: hidden;
+  color-scheme: dark;
 }
+.an-input:focus-within { border-color: #ff4655; }
 .an-date {
-  height: 28px;
+  height: 34px;
+  width: 168px;
+  flex: 0 0 auto;
   box-sizing: border-box;
   padding: 0 8px;
   border-radius: 6px;
@@ -600,28 +641,43 @@
   background: #0f1216;
   color: #e6e8eb;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  color-scheme: dark;
 }
 .an-field input, .an-field select, .an-memo {
   height: 40px;
   border: 0;
-  background: transparent;
+  background: #0f1216;
   color: #e6e8eb;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 15px;
   outline: none;
   width: 100%;
+  color-scheme: dark;
 }
-.an-input input { height: auto; flex: 1; min-width: 0; }
+.an-input input {
+  height: 100%;
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #0f1216;
+  appearance: none;
+  color-scheme: dark;
+}
 .an-memo {
   height: 88px;
   font-family: "IBM Plex Sans JP", sans-serif;
   font-size: 14px;
   resize: vertical;
   border: 1px solid #2c333d;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #0f1216;
   padding: 8px 10px;
+  color-scheme: dark;
 }
 
 .an-req { color: #ff8a94; font-size: 12px; font-weight: 500; }
@@ -703,6 +759,7 @@
 }
 
 .an-scroll { flex: 1; overflow: auto; padding: 16px 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+.an-count { font-variant-numeric: tabular-nums; }
 .an-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
 .an-filters label { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: #9aa3ad; }
 .an-app .an-select {
@@ -726,7 +783,7 @@
 }
 .an-app .an-select:focus {
   outline: none;
-  border-color: #4a5361;
+  border-color: #ff4655;
 }
 .an-app .an-select.is-compact {
   height: 28px;
@@ -754,6 +811,8 @@
 .an-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .an-table th, .an-table td { border-bottom: 1px solid #262c35; padding: 8px; text-align: left; white-space: nowrap; }
 .an-table-wrap { overflow: auto; }
+.yt-chart { width: 100%; height: auto; background: #12161c; border-radius: 8px; }
+.an-text-btn { color: #e6e8eb; text-align: left; }
 .an-diff { background: #172131; }
 
 .an-columns { display: grid; grid-template-columns: 360px 1fr; min-height: 0; flex: 1; }
@@ -840,6 +899,93 @@
 
 .an-handoff { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .an-handoff .an-panel { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+/* 動画作成の .gd-step input と同じ暗い入力面。クラスのない input が OS の白地になるのを防ぐ */
+.an-gear-pop :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'])),
+.an-page :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'])) {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #2c333d;
+  border-radius: 6px;
+  background: #0f1216;
+  color: #e6e8eb;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color-scheme: dark;
+}
+.an-gear-pop :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='date'], [type='datetime-local'], [type='time'])),
+.an-page :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='date'], [type='datetime-local'], [type='time'])) {
+  appearance: none;
+}
+.an-gear-pop :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'])):focus,
+.an-page :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'])):focus,
+.an-memo:focus,
+.ai-select:focus,
+.ai-paste:focus,
+.ai-edit textarea:focus {
+  outline: none;
+  border-color: #ff4655;
+}
+.an-page .an-date {
+  width: 168px;
+  flex: 0 0 auto;
+}
+/* 秒数・座標など、動画作成の数値欄と同じ幅 */
+.an-page .an-num {
+  width: 72px;
+  max-width: 72px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+.an-date::-webkit-datetime-edit,
+.an-date::-webkit-datetime-edit-fields-wrapper,
+.an-date::-webkit-datetime-edit-text,
+.an-date::-webkit-datetime-edit-month-field,
+.an-date::-webkit-datetime-edit-day-field,
+.an-date::-webkit-datetime-edit-year-field {
+  color: #e6e8eb;
+  background: transparent;
+}
+.an-row > input:not([type='checkbox']):not([type='radio']):not(.an-date) {
+  width: auto;
+  flex: 1 1 180px;
+  min-width: 140px;
+}
+.an-page input::placeholder,
+.an-gear-pop input::placeholder,
+.an-memo::placeholder,
+.ai-paste::placeholder {
+  color: #6f7883;
+}
+.an-gear-pop input:-webkit-autofill,
+.an-page input:-webkit-autofill,
+.an-input input:-webkit-autofill {
+  -webkit-text-fill-color: #e6e8eb;
+  caret-color: #e6e8eb;
+  box-shadow: 0 0 0 1000px #0f1216 inset;
+}
+.an-app input[type='checkbox'],
+.an-app input[type='radio'] {
+  accent-color: #ff4655;
+}
+.an-form {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.an-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #c9ced4;
+}
+.an-form .an-select,
+.an-form textarea { width: 100%; }
 
 @media (max-width: 1279px) {
   .an-side.is-collapsed { display: none; }

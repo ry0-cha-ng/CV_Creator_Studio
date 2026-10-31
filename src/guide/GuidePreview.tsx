@@ -14,13 +14,15 @@ import type { AudioTrack } from '../../shared/schema/audio';
 import type { Language, Project } from '../../shared/schema/project';
 import type { SceneKey } from '../../shared/schema/project-keys';
 import { sceneGuideCopy, type GuideStepId } from '../../shared/guide';
+import { ytShortsPhoneAspect, ytShortsPlayback } from '../../shared/layout-focus';
 import { publishingSafeText } from '../../shared/production';
 import { stopBgmPreview } from './bgm-preview';
-import { ShortsChrome } from './ShortsChrome';
+import { ShortsChrome, ShortsTabBar } from './ShortsChrome';
 import { TikTokChrome } from './TikTokChrome';
 import type { CaptionPreviewId, CaptionPreviewTarget } from './steps';
 
 const PREVIEW_MIN = 360;
+const PREVIEW_DEFAULT = Math.round(PREVIEW_MIN * 1.5);
 const VIDEO_BASE = 270;
 const CARD45_BASE = 240;
 const CARD916_BASE = 190;
@@ -30,11 +32,13 @@ const inputProps = (
   language: Language,
   audioTracks: AudioTrack[],
   showSafeZone: boolean,
+  showYtGuide: boolean,
 ) => ({
   project,
   language,
   mediaBaseUrl: 'studio-media://root',
   showSafeZone,
+  showYtGuide,
   audioTracks,
   audioTrack: audioTracks.find((track) => track.id === project.audio.bgm?.audioTrackId),
 });
@@ -48,12 +52,6 @@ const clock = (seconds: number): string => {
 
 const captionPreviewLabel = (project: Project, id: CaptionPreviewId): string => {
   if (id === 'cta') return resolveCtaDesign(project) === 's4-block' ? 'S4 CTA' : 'S7 CTA';
-  if (id === 'demo') return project.templateId === 't-guide' ? 'G4 実戦デモ' : 'S6 実戦デモ';
-  if (project.templateId === 't-guide') {
-    if (id === 'hook') return 'G1 タイトル';
-    if (id === 'stand') return 'G2 手順';
-    return 'G2 狙い（投げ方）';
-  }
   if (id === 'hook') return 'S1 フック';
   if (id === 'stand') return 'S2 立ち位置';
   return 'S3 狙い（投げ方）';
@@ -214,6 +212,7 @@ export const GuidePreview = ({
   collapsed: boolean;
   onToggle: () => void;
 }) => {
+  const [showYtGuide, setShowYtGuide] = useState(false);
   const fps = project.templateParams.fps;
   const durationInFrames = Math.max(1, Math.round(activeTimeline(project).durationSec * fps));
   const captionThumb = step === 5 && captionPreview === 'thumb';
@@ -244,14 +243,14 @@ export const GuidePreview = ({
     (step === 2 || step === 3 || step === 5 || step === 6 || step === 8 || step === 9 || step === 10);
   const showThumbnail = cards || step === 9;
   const props = useMemo(
-    () => inputProps(project, language, audioTracks, showSafeZone),
-    [project, language, audioTracks, showSafeZone],
+    () => inputProps(project, language, audioTracks, showSafeZone, showYtGuide),
+    [project, language, audioTracks, showSafeZone, showYtGuide],
   );
   const previewRef = useRef<HTMLElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; width: number } | null>(null);
-  const [width, setWidth] = useState(PREVIEW_MIN);
+  const [width, setWidth] = useState(PREVIEW_DEFAULT);
   const [maxWidth, setMaxWidth] = useState(720);
   const [resizing, setResizing] = useState(false);
   const [videoWidth, setVideoWidth] = useState(VIDEO_BASE);
@@ -266,7 +265,7 @@ export const GuidePreview = ({
     return Math.min(max, Math.max(PREVIEW_MIN, Math.round(value)));
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const update = (): void => {
       const next = clampWidth(Number.POSITIVE_INFINITY);
       setMaxWidth(next);
@@ -289,12 +288,20 @@ export const GuidePreview = ({
       const next = Math.min(inFrame ?? 0, durationInFrames - 1);
       playbackFrameRef.current = next;
       player.seekTo(next);
+    } else if (step === 3 && inFrame != null && outFrame != null) {
+      const frame = playbackFrameRef.current;
+      const inside = frame >= inFrame && frame <= outFrame;
+      const next = Math.min(inside ? frame : inFrame, durationInFrames - 1);
+      playbackFrameRef.current = next;
+      player.seekTo(next);
     } else {
       const frame = playbackFrameRef.current;
       if (frame > 0) player.seekTo(Math.min(frame, durationInFrames - 1));
     }
     return () => player.removeEventListener('frameupdate', onFrame);
-  }, [playerRef, playbackFrameRef, project.id, step, sceneKey, captionPreview, captionCard, captionThumb, durationInFrames, inFrame]);
+  }, [playerRef, playbackFrameRef, project.id, step, sceneKey, captionPreview, captionCard, captionThumb, durationInFrames, inFrame, outFrame]);
+
+  const posting = step === 8 || step === 9 || step === 10;
 
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -309,7 +316,8 @@ export const GuidePreview = ({
         const footH = footRef.current?.offsetHeight ?? 0;
         const availableH = Math.max(0, body.clientHeight - padY - footH - 12);
         const desired = VIDEO_BASE + extra;
-        const aspect = captionCard === 'x' ? 4 / 5 : 9 / 16;
+        const aspect =
+          captionCard === 'x' ? 4 / 5 : posting && postApp === 'youtube' ? ytShortsPhoneAspect() : 9 / 16;
         const byHeight = availableH > 0 ? availableH * aspect : desired;
         const next = Math.max(160, Math.min(desired, availableW || desired, byHeight));
         setVideoWidth((current) => (Math.abs(current - next) < 0.5 ? current : next));
@@ -329,7 +337,7 @@ export const GuidePreview = ({
     const observer = new ResizeObserver(measure);
     observer.observe(body);
     return () => observer.disconnect();
-  }, [collapsed, exporting, video, cards, captionCard, captionThumb, width, step]);
+  }, [collapsed, exporting, video, cards, captionCard, captionThumb, width, step, postApp, posting]);
 
   const onResizeDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault();
@@ -348,7 +356,6 @@ export const GuidePreview = ({
   };
 
   const layoutName = project.cardLayout === 'stack' ? 'B案' : 'A案';
-  const posting = step === 8 || step === 9 || step === 10;
   const label = captionThumb
     ? 'サムネイル（9:16）'
     : captionCard === 'card'
@@ -385,7 +392,7 @@ export const GuidePreview = ({
         : posting
           ? postApp === 'tiktok'
             ? 'タイトルとハッシュタグの見え方の目安です。右側のボタンと下部のタブはTikTokの画面を模しています'
-            : 'タイトルの見え方の目安です。チャンネル欄と右側のボタンはYouTube Shortsの画面を模しています'
+            : 'タイトルの見え方の目安です。チャンネル欄と右側のボタンは動画の上に重なります。ホームやショートは動画の下の帯で、再生領域には入りません'
           : '入力した内容がすぐに反映されます';
   const origin = inFrame ?? 0;
   const span = outFrame != null ? outFrame - origin + 1 : durationInFrames;
@@ -402,6 +409,7 @@ export const GuidePreview = ({
     : 'オリジナルサウンド';
   const card45 = cardWidth;
   const card916 = card45 * (CARD916_BASE / CARD45_BASE);
+  const ytPlayback = posting && postApp === 'youtube' ? ytShortsPlayback(videoWidth) : null;
   const thumbnailFrame = (width: number): ReactNode => (
     <div className="gd-preview-shot">
       <span>サムネイル（{language === 'ja' ? '日本語' : 'English'} · 9:16）</span>
@@ -485,6 +493,14 @@ export const GuidePreview = ({
                 </button>
               </div>
             )}
+            <label className="gd-review-safe">
+              <input
+                type="checkbox"
+                checked={showYtGuide}
+                onChange={(event) => setShowYtGuide(event.target.checked)}
+              />
+              YouTube の UI ガイド
+            </label>
             <div className="gd-lang" role="group" aria-label="言語">
               <button type="button" className={language === 'ja' ? 'is-on' : ''} onClick={() => onLanguage('ja')}>
                 日本語
@@ -573,35 +589,71 @@ export const GuidePreview = ({
             <>
               {step === 9 && thumbnailFrame(videoWidth)}
               <div
-                className={`gd-phone ${step === 8 || step === 9 || step === 10 ? 'has-post' : ''}`}
-                style={{ width: videoWidth, height: videoWidth * (16 / 9) }}
+                className={`gd-phone ${posting ? 'has-post' : ''} ${ytPlayback ? 'is-yt-phone' : ''}`}
+                style={
+                  ytPlayback
+                    ? { width: videoWidth, height: ytPlayback.phoneHeight }
+                    : { width: videoWidth, height: videoWidth * (16 / 9) }
+                }
               >
-                <Player
-                  ref={playerRef}
-                  component={LineupShortStandard}
-                  inputProps={props}
-                  durationInFrames={durationInFrames}
-                  compositionWidth={1080}
-                  compositionHeight={1920}
-                  fps={fps}
-                  loop
-                  clickToPlay={false}
-                  spaceKeyToPlayOrPause={false}
-                  browserMediaControlsBehavior={{ mode: 'do-nothing' }}
-                  inFrame={inFrame}
-                  outFrame={outFrame}
-                  initialFrame={playbackFrameRef.current}
-                  style={{ width: '100%', height: '100%' }}
-                />
-                <FreezeBadge playerRef={playerRef} project={project} fps={fps} />
-                {posting && postApp === 'youtube' && (
-                  <ShortsChrome
-                    title={shortsTitle}
-                    sound={shortsSound}
-                    playerRef={playerRef}
-                    origin={origin}
-                    span={span}
-                  />
+                {ytPlayback ? (
+                  <>
+                    <div className="gd-shorts-viewport" style={{ height: ytPlayback.viewportHeight }}>
+                      <Player
+                        ref={playerRef}
+                        component={LineupShortStandard}
+                        inputProps={props}
+                        durationInFrames={durationInFrames}
+                        compositionWidth={1080}
+                        compositionHeight={1920}
+                        fps={fps}
+                        loop
+                        clickToPlay={false}
+                        spaceKeyToPlayOrPause={false}
+                        browserMediaControlsBehavior={{ mode: 'do-nothing' }}
+                        inFrame={inFrame}
+                        outFrame={outFrame}
+                        initialFrame={playbackFrameRef.current}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: -ytPlayback.playerOffset,
+                          width: ytPlayback.playerWidth,
+                          height: ytPlayback.viewportHeight,
+                        }}
+                      />
+                      <FreezeBadge playerRef={playerRef} project={project} fps={fps} />
+                      <ShortsChrome
+                        title={shortsTitle}
+                        sound={shortsSound}
+                        playerRef={playerRef}
+                        origin={origin}
+                        span={span}
+                      />
+                    </div>
+                    <ShortsTabBar height={ytPlayback.tabHeight} />
+                  </>
+                ) : (
+                  <>
+                    <Player
+                      ref={playerRef}
+                      component={LineupShortStandard}
+                      inputProps={props}
+                      durationInFrames={durationInFrames}
+                      compositionWidth={1080}
+                      compositionHeight={1920}
+                      fps={fps}
+                      loop
+                      clickToPlay={false}
+                      spaceKeyToPlayOrPause={false}
+                      browserMediaControlsBehavior={{ mode: 'do-nothing' }}
+                      inFrame={inFrame}
+                      outFrame={outFrame}
+                      initialFrame={playbackFrameRef.current}
+                      style={{ width: '100%', height: '100%' }}
+                    />
+                    <FreezeBadge playerRef={playerRef} project={project} fps={fps} />
+                  </>
                 )}
                 {posting && postApp === 'tiktok' && (
                   <TikTokChrome

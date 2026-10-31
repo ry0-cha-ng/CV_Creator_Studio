@@ -6,8 +6,11 @@ import {
   type DeliveryPresetId,
 } from './delivery-presets';
 import { guessBasename, trackingFor, trackingUrlNearTop } from './export-copy';
+import { guideStepNumber, publishingPresets } from './guide';
 import type { PostUrlVerdict, TakenPostUrl } from './post-url';
 import type { Project } from './schema/project';
+
+export { publishingPresets };
 
 export const workflowStatusSchema = z.enum(['pending', 'in-progress', 'done']);
 export type WorkflowStatus = z.infer<typeof workflowStatusSchema>;
@@ -17,6 +20,7 @@ export const workflowTaskTypeSchema = z.enum([
   'youtube-publish',
   'tiktok-publish',
   'x-publish',
+  'youtube-publication-verify',
   'post-publish-verify',
   'record-complete',
 ]);
@@ -83,6 +87,7 @@ export const publishingWorkflowSchema = z.object({
   pausedForToday: z.boolean().optional(),
   pausedOn: z.string().optional(),
   staleExport: z.boolean().optional(),
+  skipQaPresets: z.array(z.string()).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
   completedAt: z.string().optional(),
@@ -185,7 +190,7 @@ export const QA_ITEMS: Record<
     { key: 'visibility', label: '公開状態が正しい', hint: '' },
     { key: 'card', label: 'カードが見える', hint: '4:5 の画像' },
     { key: 'language', label: '投稿文が正しい', hint: '日本語' },
-    { key: 'link', label: 'ClutchVault URLが開き、UTM が正しい', hint: 'utm_source=x' },
+    { key: 'link', label: 'ClutchVault URLが開く', hint: '定点の詳細ページ。投稿文のリンクに UTM は付けない' },
   ],
 };
 
@@ -222,7 +227,7 @@ const checklistFor = (taskId: string, type: WorkflowTaskType, preset?: DeliveryP
     const english = preset !== 'yt-ja';
     const rows = [
       item(taskId, 'upload', english ? '英語MP4をアップロード' : '日本語MP4をアップロード', true),
-      item(taskId, 'title', 'タイトルを貼る', true, 'フック先頭・内部記法なし・ハッシュタグなし'),
+      item(taskId, 'title', 'タイトルを貼る', true, 'フック先頭・内部記法なし'),
       item(taskId, 'description', '説明文を貼る', true, '概要の直後にUTM URL。クローズドβ前の公開状況'),
       item(taskId, 'hashtags', 'ハッシュタグを説明文の末尾に置く', true),
       item(taskId, 'thumbnail', 'サムネイル / カバーを確認', true),
@@ -268,6 +273,7 @@ export const taskTitle = (task: WorkflowTask): string => {
   if (task.type === 'youtube-publish') return 'YouTubeへ投稿してください';
   if (task.type === 'tiktok-publish') return 'TikTokへ投稿してください';
   if (task.type === 'x-publish') return 'Xへ投稿してください';
+  if (task.type === 'youtube-publication-verify') return 'YouTubeの公開を確認してください';
   if (task.type === 'post-publish-verify') return '公開後QA';
   return '記録完了';
 };
@@ -277,6 +283,7 @@ export const taskShortLabel = (task: WorkflowTask): string => {
   if (task.type === 'youtube-publish') return 'YouTube';
   if (task.type === 'tiktok-publish') return 'TikTok';
   if (task.type === 'x-publish') return 'X';
+  if (task.type === 'youtube-publication-verify') return 'YT公開確認';
   if (task.type === 'post-publish-verify') return '公開後QA';
   return '記録完了';
 };
@@ -290,15 +297,26 @@ export const taskBlurb = (task: WorkflowTask): string => {
     return `${task.preset === 'tt-en' ? '英語版' : '日本語版'}（${task.preset ?? 'tiktok'}）を TikTok に手動で投稿し、URLを記録します`;
   }
   if (task.type === 'x-publish') return 'X用カードと、日英フックから作った投稿文を手動で投稿し、ポストのURLを記録します';
+  if (task.type === 'youtube-publication-verify') {
+    return '予約公開はYouTubeが行います。予定時刻までは他媒体を進められます。公開後に状態を再取得してください';
+  }
   if (task.type === 'post-publish-verify') return '数字はまだ見ません。公開した投稿を開いて、事故がないかだけ確かめます';
   return '投稿の記録と、振り返りの予約がそろっているかを最後に確かめます。すべて自動で判定します';
 };
 
-export const currentTask = (tasks: WorkflowTask[]): WorkflowTask | null => {
+const isWaitingPublication = (task: WorkflowTask, now = new Date()): boolean => {
+  if (task.type !== 'youtube-publication-verify' || !task.dueAt) return false;
+  const due = new Date(task.dueAt);
+  return !Number.isNaN(due.getTime()) && due.getTime() > now.getTime();
+};
+
+export const currentTask = (tasks: WorkflowTask[], now = new Date()): WorkflowTask | null => {
   const ordered = [...tasks].sort((left, right) => left.sortOrder - right.sortOrder);
   return (
     ordered.find((task) => task.status === 'needs-fix') ??
-    ordered.find((task) => task.status === 'ready' || task.status === 'in-progress') ??
+    ordered.find(
+      (task) => (task.status === 'ready' || task.status === 'in-progress') && !isWaitingPublication(task, now),
+    ) ??
     null
   );
 };
@@ -324,10 +342,18 @@ export const refreshReadiness = (tasks: WorkflowTask[]): WorkflowTask[] => {
 
 const chainDependencies = (tasks: WorkflowTask[]): WorkflowTask[] => {
   const ordered = [...tasks].sort((left, right) => left.sortOrder - right.sortOrder);
-  return ordered.map((task, index) => ({
-    ...task,
-    dependsOnTaskIds: ordered.slice(0, index).map((item) => item.id),
-  }));
+  return ordered.map((task, index) => {
+    if (task.type === 'youtube-publication-verify') {
+      const youtube = ordered.find((item) => item.type === 'youtube-publish' && item.preset === task.preset);
+      return { ...task, dependsOnTaskIds: youtube ? [youtube.id] : [] };
+    }
+    const blockers = ordered.slice(0, index).filter((item) => item.type !== 'youtube-publication-verify');
+    const extra =
+      task.type === 'post-publish-verify' || task.type === 'record-complete'
+        ? ordered.filter((item) => item.type === 'youtube-publication-verify').map((item) => item.id)
+        : [];
+    return { ...task, dependsOnTaskIds: [...new Set([...blockers.map((item) => item.id), ...extra])] };
+  });
 };
 
 const stampBundle = (bundle: PublishingBundle, now: string): PublishingBundle => {
@@ -395,8 +421,8 @@ export const createPublishing = (
   now: string,
   nextId: () => string,
 ): PublishingBundle | null => {
-  const presets = orderedPresets(project.guide.exportPresets);
-  if (!project.guide.lastExport || presets.length === 0) return null;
+  const presets = publishingPresets(project);
+  if (presets.length === 0) return null;
   const workflowId = nextId();
   const make = (
     type: WorkflowTaskType,
@@ -522,7 +548,7 @@ export const reconcilePublishing = (
       kept.push({ ...template, workflowId: existing.workflow.id });
     }
   }
-  const structural = fresh.tasks.filter((task) => !isPublishTask(task.type));
+  const structural = fresh.tasks.filter((task) => !isPublishTask(task.type) && task.type !== 'youtube-publication-verify');
   const mergedStructural = structural.map((template) => {
     const previous = existing.tasks.find((task) => task.type === template.type);
     return previous
@@ -532,22 +558,27 @@ export const reconcilePublishing = (
   const publishTasks = kept
     .filter((task) => isPublishTask(task.type))
     .sort((left, right) => {
-      const leftIndex = orderedPresets(project.guide.exportPresets).indexOf(left.preset as DeliveryPresetId);
-      const rightIndex = orderedPresets(project.guide.exportPresets).indexOf(right.preset as DeliveryPresetId);
+      const leftIndex = publishingPresets(project).indexOf(left.preset as DeliveryPresetId);
+      const rightIndex = publishingPresets(project).indexOf(right.preset as DeliveryPresetId);
       return leftIndex - rightIndex;
     })
     .map((task, index) => ({ ...task, sortOrder: index + 1 }));
+  const verifyTasks = existing.tasks
+    .filter((task) => task.type === 'youtube-publication-verify')
+    .map((task, index) => ({ ...task, workflowId: existing.workflow.id, sortOrder: publishTasks.length + 1 + index }));
+  const after = publishTasks.length + 1 + verifyTasks.length;
   const tasks = [
     { ...mergedStructural[0], sortOrder: 0 },
     ...publishTasks,
-    { ...mergedStructural[1], sortOrder: publishTasks.length + 1 },
-    { ...mergedStructural[2], sortOrder: publishTasks.length + 2 },
+    ...verifyTasks,
+    { ...mergedStructural[1], sortOrder: after },
+    { ...mergedStructural[2], sortOrder: after + 1 },
   ];
   return absorbExistingUrls(
     {
       workflow: {
         ...existing.workflow,
-        selectedPresets: orderedPresets(project.guide.exportPresets),
+        selectedPresets: publishingPresets(project),
         exportStamp: stamp,
         staleExport: Boolean(stamp && stamp !== existing.workflow.exportStamp),
       },
@@ -627,6 +658,70 @@ export const canCompletePublish = (task: WorkflowTask, verdict: PostUrlVerdict):
   return parts.length > 0 ? parts.join(' · ') : null;
 };
 
+export const upsertPublicationVerify = (
+  bundle: PublishingBundle,
+  youtubeTask: WorkflowTask,
+  dueAt: string | undefined,
+  now: string,
+  nextId: () => string,
+): PublishingBundle => {
+  const existing = bundle.tasks.find(
+    (task) => task.type === 'youtube-publication-verify' && task.preset === youtubeTask.preset,
+  );
+  if (!dueAt) {
+    if (!existing) return bundle;
+    return stampBundle(
+      {
+        ...bundle,
+        tasks: bundle.tasks.map((task) =>
+          task.id === existing.id
+            ? { ...task, status: 'skipped' as const, skippedReason: '非公開または限定公開で保管', completedAt: now, dueAt: undefined, updatedAt: now }
+            : task,
+        ),
+      },
+      now,
+    );
+  }
+  if (existing) {
+    return stampBundle(
+      {
+        ...bundle,
+        tasks: bundle.tasks.map((task) =>
+          task.id === existing.id
+            ? {
+                ...task,
+                dueAt,
+                status: existing.status === 'done' ? 'done' : 'pending',
+                skippedReason: undefined,
+                updatedAt: now,
+              }
+            : task,
+        ),
+      },
+      now,
+    );
+  }
+  const id = nextId();
+  const verify: WorkflowTask = workflowTaskSchema.parse({
+    id,
+    workflowId: bundle.workflow.id,
+    projectId: youtubeTask.projectId,
+    type: 'youtube-publication-verify',
+    platform: 'youtube',
+    preset: youtubeTask.preset,
+    lang: youtubeTask.lang,
+    status: 'pending',
+    required: true,
+    dependsOnTaskIds: [youtubeTask.id],
+    dueAt,
+    sortOrder: youtubeTask.sortOrder + 1,
+    createdAt: now,
+    updatedAt: now,
+    checklistItems: [],
+  });
+  return stampBundle({ ...bundle, tasks: [...bundle.tasks, verify] }, now);
+};
+
 export const completeTask = (
   bundle: PublishingBundle,
   taskId: string,
@@ -659,7 +754,7 @@ export const publishFiles = (project: Project): PublishFile[] => {
   const directory = (project.guide.lastExport?.outputDir ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
   const prefix = directory ? `${directory}/` : '';
   const files: PublishFile[] = [];
-  for (const preset of orderedPresets(project.guide.exportPresets)) {
+  for (const preset of publishingPresets(project)) {
     const base = guessBasename(project, preset);
     const spec = DELIVERY_PRESETS[preset];
     const push = (kind: PublishFileKind, name: string): void => {
@@ -694,7 +789,7 @@ export const precheckAuto = (
   },
 ): AutoCheck[] => {
   const fresh = input.exportFresh;
-  const presets = orderedPresets(project.guide.exportPresets);
+  const presets = publishingPresets(project);
   const copyOk = presets.every((preset) =>
     DELIVERY_PRESETS[preset].copyLanguages.every((language) => copyText(project, language)),
   );
@@ -713,7 +808,6 @@ export const precheckAuto = (
       DELIVERY_PRESETS[preset].copyLanguages.map((language) => project.publishing.title[language] ?? ''),
     );
   const titleMarkup = youtubeTitles.some((title) => /[\[\]]|\{br\}/.test(title));
-  const titleHashtag = youtubeTitles.some((title) => /#[^\s#]/.test(title));
   const experiment = project.experimentRef;
   const checks: AutoCheck[] = [
     {
@@ -732,7 +826,9 @@ export const precheckAuto = (
       key: 'copy-present',
       label: '投稿文が空でない',
       ok: copyOk,
-      detail: copyOk ? '選んだ投稿先のタイトルがあります' : '空のタイトルがあります。手順8で入れてください',
+      detail: copyOk
+        ? '選んだ投稿先のタイトルがあります'
+        : `空のタイトルがあります。手順${guideStepNumber(8)}で入れてください`,
     },
     {
       key: 'license-ok',
@@ -767,16 +863,9 @@ export const precheckAuto = (
         key: 'title-markup',
         label: 'YouTubeタイトルに内部記法が残っていない',
         ok: !titleMarkup,
-        detail: titleMarkup ? '[ ] または {br} がタイトルに残っています。手順8で外してください' : '内部記法はありません',
-      },
-      {
-        key: 'title-hashtag',
-        label: 'YouTubeタイトルにハッシュタグがない',
-        ok: !titleHashtag,
-        severity: titleHashtag ? 'warn' : undefined,
-        detail: titleHashtag
-          ? 'ハッシュタグは説明文の末尾へ移してください。この警告だけでは完了を止めません'
-          : 'タイトル内にハッシュタグはありません',
+        detail: titleMarkup
+          ? `[ ] または {br} がタイトルに残っています。手順${guideStepNumber(8)}で外してください`
+          : '内部記法はありません',
       },
     );
   }
@@ -787,16 +876,27 @@ export const recordAuto = (
   project: Project,
   tasks: WorkflowTask[],
   hasReview: (preset: string) => boolean,
+  skipReviewPresets: string[] = [],
 ): AutoCheck[] => {
-  const presets = orderedPresets(project.guide.exportPresets);
+  const presets = publishingPresets(project);
+  const skipReview = new Set(skipReviewPresets);
   const rows = presets.map((preset) => {
     const task = tasks.find((item) => item.preset === preset);
     const post = project.posts.find((item) => item.preset === preset && item.url.trim());
     const skipped = task?.status === 'skipped';
-    return { preset, skipped, post, ok: skipped || Boolean(post?.url && post.postedAt) };
+    const kept = post?.publicationState === 'private' || post?.publicationState === 'unlisted';
+    const scheduled = post?.publicationState === 'scheduled';
+    return {
+      preset,
+      skipped,
+      post,
+      ok: skipped || Boolean(post?.url && (post.postedAt || kept || scheduled)),
+    };
   });
   const recorded = rows.every((row) => row.ok);
-  const reviewOk = rows.every((row) => row.skipped || hasReview(row.preset));
+  const reviewOk = rows.every(
+    (row) => row.skipped || skipReview.has(row.preset) || row.post?.publicationState === 'private' || row.post?.publicationState === 'unlisted' || hasReview(row.preset),
+  );
   const experimentOk = !project.experimentRef || Boolean(project.experimentRef.experimentId && project.experimentRef.arm);
   return [
     {
@@ -842,21 +942,29 @@ export const withRecordedPost = (
   url: string,
   postedAt: string,
   postId: string,
+  extra?: {
+    publicationState?: NonNullable<Project['posts'][number]['publicationState']>;
+    scheduledPublishAt?: string;
+    timezone?: string;
+  },
 ): Project => {
   const spec = DELIVERY_PRESETS[preset];
+  const patch = {
+    url,
+    postedAt,
+    platform: spec.platform,
+    lang: spec.videoLanguage ?? ('ja' as const),
+    ...extra,
+  };
   const posts = project.posts.some((post) => post.preset === preset)
-    ? project.posts.map((post) =>
-        post.preset === preset ? { ...post, url, postedAt, platform: spec.platform, lang: spec.videoLanguage ?? post.lang } : post,
-      )
+    ? project.posts.map((post) => (post.preset === preset ? { ...post, ...patch, lang: spec.videoLanguage ?? post.lang } : post))
     : [
         ...project.posts,
         {
           id: postId,
-          platform: spec.platform,
-          lang: spec.videoLanguage ?? 'ja',
-          url,
-          postedAt,
           preset,
+          ...patch,
+          lang: spec.videoLanguage ?? 'ja',
         },
       ];
   return { ...project, posts };
@@ -867,7 +975,12 @@ export const projectStatusForWorkflow = (
   bundle: PublishingBundle,
   previousStatus: WorkflowStatus,
 ): Project['status'] => {
-  if (bundle.workflow.status === 'done') return 'posted';
+  if (bundle.workflow.status === 'done') {
+    const waiting = project.posts.some(
+      (post) => post.platform === 'youtube' && (post.publicationState === 'scheduled' || post.publicationState === 'private' || post.publicationState === 'unlisted'),
+    );
+    return waiting ? 'exported' : 'posted';
+  }
   if (previousStatus === 'done' && project.status === 'posted') return 'exported';
   return project.status;
 };
@@ -875,9 +988,11 @@ export const projectStatusForWorkflow = (
 export const manualPrecheckReady = (task: WorkflowTask, checks: AutoCheck[]): boolean =>
   checks.every((check) => check.ok || check.severity === 'warn') && manualReady(task);
 
-export const qaReady = (task: WorkflowTask, presets: DeliveryPresetId[]): boolean => {
+export const qaReady = (task: WorkflowTask, presets: DeliveryPresetId[], skipPresets: string[] = []): boolean => {
   const qa = task.qa ?? {};
+  const skip = new Set(skipPresets);
   return presets.every((preset) => {
+    if (skip.has(preset)) return true;
     const platform = DELIVERY_PRESETS[preset].platform;
     const marks = qa[preset] ?? {};
     return QA_ITEMS[platform].every((entry) => marks[entry.key] === 'ok');

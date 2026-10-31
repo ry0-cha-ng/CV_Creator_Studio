@@ -40,6 +40,7 @@ import type {
   PrimaryMetric,
 } from '../../shared/schema/analytics';
 import { AboutButton } from './chrome';
+import { ApiWindowHint } from './PostDetail';
 import { useAnalytics } from './context';
 
 const stamp = (iso: string): string => {
@@ -344,6 +345,7 @@ const StepMetrics = ({
       ];
   return (
     <div>
+      {post.platform === 'youtube' && post.youtubeVideoId && <ApiWindowHint postId={post.id} />}
       <div className="an-row">
         <strong>{platformLabel(post.platform)}</strong>
         <span className="an-muted">取得日</span>
@@ -669,6 +671,7 @@ export const PostPanel = ({
         <strong>作り方</strong>
         <div className="an-kv">
           <span>オープニング</span><span>{post.openingType ? OPENING_LABELS[post.openingType] : '未設定'}</span>
+          <span>サムネイル</span><span>{post.thumbnailLayout === 'focus' || post.content.thumbnailLayout === 'focus' ? 'フォーカス' : '従来'}</span>
           <span>フック</span><span>{HOOK_PATTERN_LABELS[post.content.hookPattern]}</span>
           <span>尺</span><span>{post.durationSec ? `${post.durationSec.toFixed(1)}秒` : '未設定'}</span>
           <span>CTA</span><span>{cta}{post.content.ctaCopy ? ` · ${post.content.ctaCopy}` : ''}</span>

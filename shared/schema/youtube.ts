@@ -242,4 +242,5 @@ export type YoutubeStatus = {
   lastRun?: SyncRun;
   horizon?: string;
   counts: { videos: number; linked: number; unlinked: number; withDaily: number };
+  capabilities: { read: boolean; publish: boolean; analytics: boolean };
 };

@@ -8,9 +8,11 @@ import {
   stillPreviewFrame,
 } from '../shared/still-focus';
 import {
+  activeTimeline,
   applySceneCutDuration,
   defaultBgmPlacement,
   rangeForSceneDuration,
+  rangeForSceneDurationFromOut,
   sceneDurations,
 } from '../shared/timeline';
 import { postsToCsv } from '../shared/post-metrics';
@@ -24,7 +26,15 @@ import {
   reviewItems,
 } from '../shared/guide';
 import { precheckAuto } from '../shared/publishing';
-import { normalizePublishingDraft } from '../shared/production';
+import {
+  applyPublishingTranslation,
+  composePublishingTitle,
+  normalizePublishingDraft,
+  publishingShowsKorean,
+  publishingTranslationLanguages,
+  publishingTranslationStale,
+  titleIssues,
+} from '../shared/production';
 
 const fail = (message: string): never => {
   console.error(message);
@@ -131,13 +141,13 @@ const created = createDefaultProject('new', '2026-10-04T00:00:00.000Z');
 if (created.lineup.agent !== 'Phoenix' || created.lineup.ability !== 'Curveball') {
   fail(`default agent ${created.lineup.agent} ${created.lineup.ability}`);
 }
-if (created.scenes.some((scene) => scene.volume !== 0.15)) fail('new project game volume should default to 0.15');
+if (created.scenes.some((scene) => scene.volume !== 0.1)) fail('new project game volume should default to 0.1');
 const resetVolumes = applyDefaultVolumes(
   { ...created, scenes: created.scenes.map((scene) => ({ ...scene, volume: 1 })) },
   true,
   false,
 );
-if (resetVolumes.scenes.some((scene) => scene.volume !== 0.15)) fail('reset game volume should use 0.15');
+if (resetVolumes.scenes.some((scene) => scene.volume !== 0.1)) fail('reset game volume should use 0.1');
 if (defaultBgmPlacement(created, 'bgm-test').gain !== 0.02) fail('new BGM volume should default to 0.02');
 if (created.englishCaptionPreset !== 'en-concise') fail('english preset');
 const createdCta = created.captions.find((caption) => caption.id === 'cta');
@@ -175,7 +185,9 @@ const kept = customCta.captions.find((caption) => caption.id === 'cta');
 if (kept?.text.ja !== '保存して' || kept?.text.en !== 'Save it') fail('custom cta was overwritten');
 const freshReview = reviewItems(created);
 if (freshReview.find((item) => item.id === 'cta-duplicate')?.level !== 'ok') fail('cta should not be duplicated');
-if (freshReview.find((item) => item.id === 'brand-lockup')?.level !== 'ok') fail('brand lockup should fit');
+for (const id of ['brand-lockup', 'overflow', 'korean-title']) {
+  if (freshReview.some((item) => item.id === id)) fail(`${id} should leave step 7`);
+}
 const duplicated = structuredClone(created);
 duplicated.captions.push({
   id: 'loop-chip',
@@ -186,26 +198,40 @@ duplicated.captions.push({
 if (reviewItems(duplicated).find((item) => item.id === 'cta-duplicate')?.level !== 'error') {
   fail('duplicate cta was not detected');
 }
-const crowded = structuredClone(created);
-const crowdedCta = crowded.captions.find((caption) => caption.id === 'cta');
-if (!crowdedCta) fail('crowded cta missing');
-crowdedCta.text = { ja: '1\n2\n3', en: '1\n2\n3' };
-if (reviewItems(crowded).find((item) => item.id === 'brand-lockup')?.level !== 'warn') {
-  fail('overlapping brand lockup was not warned');
+if (!created.guide.exportPresets.includes('yt-global') || !created.guide.exportPresets.includes('x-jp')) {
+  fail('default presets');
 }
-if (!created.guide.exportPresets.includes('yt-global')) fail('default presets');
+if (created.guide.exportPresets.includes('tt-jp')) fail('tiktok ja should start off');
 const ranged = rangeForSceneDuration(1, 4, 10);
 if (ranged.in !== 1 || ranged.out !== 5) fail(`range ${ranged.in}-${ranged.out}`);
 const stand = applySceneCutDuration(created, 'stand', 5);
 if (sceneDurations(stand).stand !== 5) fail(`stand duration ${sceneDurations(stand).stand}`);
+const card = applySceneCutDuration(created, 'card', 1.2);
+if (sceneDurations(card).card !== 1.2) fail(`card duration ${sceneDurations(card).card}`);
+if (activeTimeline(card).items.find((item) => item.sceneKey === 'card')?.duration !== 1.2) {
+  fail('card timeline duration');
+}
+const edited = applySceneCutDuration(
+  { ...created, timelineEdited: true, timeline: activeTimeline(created) },
+  'hook',
+  2.5,
+);
+if (sceneDurations(edited).hook !== 2.5) fail(`edited hook duration ${sceneDurations(edited).hook}`);
+if (activeTimeline(edited).items.find((item) => item.sceneKey === 'hook')?.duration !== 2.5) {
+  fail('edited timeline hook duration');
+}
 const demo = applySceneCutDuration(created, 'demo', 3);
 if (sceneDurations(demo).demo !== 6) fail(`demo duration ${sceneDurations(demo).demo}`);
 const shifted = rangeForSceneDuration(9, 4, 10);
 if (shifted.in !== 6 || shifted.out !== 10) fail(`shifted range ${shifted.in}-${shifted.out}`);
+const fromOut = rangeForSceneDurationFromOut(7, 4, 10);
+if (fromOut.in !== 3 || fromOut.out !== 7) fail(`fromOut ${fromOut.in}-${fromOut.out}`);
+const fromOutClamped = rangeForSceneDurationFromOut(2, 4, 10);
+if (fromOutClamped.in !== 0 || fromOutClamped.out !== 4) fail(`fromOutClamped ${fromOutClamped.in}-${fromOutClamped.out}`);
 
 const url = buildTrackingUrl({
   presetId: 'yt-global',
-  basename: '20261010_Summit_Phoenix_std_en_v1',
+  basename: '20261010_Summit_A_Phoenix_lineup_en_v1',
   language: 'en',
   campaign: 'first_9_lineups',
 });
@@ -214,11 +240,11 @@ if (parsed.origin + parsed.pathname !== 'https://clutchvault.app/en/') fail(`ori
 if (parsed.searchParams.get('utm_source') !== 'youtube') fail('utm_source');
 if (parsed.searchParams.get('utm_medium') !== 'short') fail('utm_medium');
 if (parsed.searchParams.get('utm_campaign') !== 'first_9_lineups') fail('utm_campaign');
-if (parsed.searchParams.get('utm_content') !== '20261010_Summit_Phoenix_std_en_v1') fail('utm_content');
+if (parsed.searchParams.get('utm_content') !== '20261010_Summit_A_Phoenix_lineup_en_v1') fail('utm_content');
 
 const jaTracked = new URL(buildTrackingUrl({
   presetId: 'yt-global',
-  basename: '20261010_Summit_Phoenix_std_en_v1',
+  basename: '20261010_Summit_A_Phoenix_lineup_en_v1',
   language: 'ja',
 }));
 if (jaTracked.origin + jaTracked.pathname !== 'https://clutchvault.app/') fail(`ja origin ${jaTracked.href}`);
@@ -226,7 +252,7 @@ if (jaTracked.searchParams.get('utm_campaign') !== 'first_9_lineups') fail('ja c
 
 const xUrl = buildTrackingUrl({
   presetId: 'x-jp',
-  basename: '20261010_Summit_Phoenix_std_x_v1',
+  basename: '20261010_Summit_A_Phoenix_lineup_x_v1',
 });
 const xParsed = new URL(xUrl);
 if (!xParsed.href.startsWith('https://clutchvault.app/?')) fail(`x url ${xParsed.href}`);
@@ -237,7 +263,7 @@ const memo = 'https://gg.clutchvault.app/lineups/phoenix?note=1&utm_source=old';
 const memoTracked = new URL(
   buildTrackingUrl({
     presetId: 'yt-global',
-    basename: '20261010_Summit_Phoenix_std_en_v1',
+    basename: '20261010_Summit_A_Phoenix_lineup_en_v1',
     language: 'en',
     campaign: 'first_9_lineups',
     base: memo,
@@ -248,11 +274,11 @@ if (memoTracked.origin + memoTracked.pathname !== 'https://gg.clutchvault.app/li
 }
 if (memoTracked.searchParams.get('note') !== '1') fail('memo query dropped');
 if (memoTracked.searchParams.get('utm_source') !== 'youtube') fail('memo utm was not replaced');
-if (memoTracked.searchParams.get('utm_content') !== '20261010_Summit_Phoenix_std_en_v1') fail('memo content');
+if (memoTracked.searchParams.get('utm_content') !== '20261010_Summit_A_Phoenix_lineup_en_v1') fail('memo content');
 const ignored = new URL(
   buildTrackingUrl({
     presetId: 'yt-global',
-    basename: '20261010_Summit_Phoenix_std_en_v1',
+    basename: '20261010_Summit_A_Phoenix_lineup_en_v1',
     language: 'en',
     base: 'http://gg.clutchvault.app/lineups/phoenix',
   }),
@@ -260,13 +286,15 @@ const ignored = new URL(
 if (ignored.origin + ignored.pathname !== 'https://clutchvault.app/en/') fail(`unsafe memo kept ${ignored.href}`);
 
 const published = followPublishing(structuredClone(created));
-if (/[#\[\]]|\{br\}/.test(published.publishing.title.ja + published.publishing.title.en)) {
+const publishedTitles = `${published.publishing.title.ja}\n${published.publishing.title.en}`;
+if (/[\[\]]|\{br\}/.test(publishedTitles) || publishedTitles.replaceAll('#valorant', '').includes('#')) {
   fail(`title kept markup ${published.publishing.title.en}`);
 }
 if (!published.publishing.title.en.startsWith('Phoenix lineups = FREE KILLS | Ascent A')) {
   fail(`en title ${published.publishing.title.en}`);
 }
-if (!published.publishing.title.ja.endsWith('フェニックス定点')) fail(`ja title ${published.publishing.title.ja}`);
+if (!published.publishing.title.en.endsWith('#valorant')) fail(`en title tag ${published.publishing.title.en}`);
+if (!published.publishing.title.ja.endsWith('フェニックス定点 #valorant')) fail(`ja title ${published.publishing.title.ja}`);
 if (!published.publishing.title.ja.includes('| アセント')) fail(`ja title missing map ${published.publishing.title.ja}`);
 if (!published.publishing.title.ko?.includes('| 어센트')) fail(`ko title missing map ${published.publishing.title.ko}`);
 const mappedHook = structuredClone(created);
@@ -284,12 +312,18 @@ namedCaption.text = { ja: 'アセントで一番使える定点', en: '어센트
 const namedTitles = followPublishing(namedHook).publishing.title;
 if (namedTitles.ja.includes('| アセント')) fail(`ja title repeated map ${namedTitles.ja}`);
 if (namedTitles.ko?.includes('| 어센트')) fail(`ko title repeated map ${namedTitles.ko}`);
+if (!published.publishing.description.en.endsWith("I'm the developer of ClutchVault.\n\n#valorantshorts")) {
+  fail('en description tag');
+}
+if (!published.publishing.description.ja.endsWith('ClutchVaultの開発者本人が投稿しています。\n\n#valorantshorts')) {
+  fail('ja description tag');
+}
 if (!published.publishing.description.en.includes('Check this lineup on ClutchVault:')) fail('en lead');
 if (!published.publishing.description.en.toLowerCase().includes('closed beta')) fail('en beta');
 if (published.publishing.description.en.includes('Save it on ClutchVault')) fail('en save claim');
 if (!published.publishing.description.ja.includes('ClutchVaultでこの定点をチェック：')) fail('ja lead');
 if (!published.publishing.description.ja.includes('クローズドβテスター受付中')) fail('ja beta');
-const expectedHashtags = 'valorant,valorant lineups,Phoenix,Ascent,valorant tips';
+const expectedHashtags = 'valorant lineups,Phoenix,Ascent,valorant tips';
 if (published.publishing.hashtags.ja !== expectedHashtags) {
   fail(`ja hashtags ${published.publishing.hashtags.ja}`);
 }
@@ -314,12 +348,12 @@ const midKept = followPublishing(midEdit);
 if (midKept.publishing.description.ja !== midInserted) {
   fail(`mid description edit was rewritten ${midKept.publishing.description.ja}`);
 }
-if (!midKept.publishing.description.ja.endsWith('投稿しています。')) fail('description ending dropped');
+if (!midKept.publishing.description.ja.endsWith('投稿しています。\n\n#valorantshorts')) fail('description ending dropped');
 const memoOnEdit = applyPublishingMemo(midKept, memo);
 if (!memoOnEdit.publishing.description.ja.includes('gg.clutchvault.app/lineups/phoenix')) {
   fail('edited description did not take the memo url');
 }
-if (!memoOnEdit.publishing.description.ja.endsWith('投稿しています。')) fail('memo sync dropped the ending');
+if (!memoOnEdit.publishing.description.ja.endsWith('投稿しています。\n\n#valorantshorts')) fail('memo sync dropped the ending');
 if (/utm_campaign|utm_content/.test(memoOnEdit.publishing.description.ja)) {
   fail('memo sync put identity utm back into the description');
 }
@@ -346,14 +380,14 @@ if (restored.publishing.description.ja.includes('gg.clutchvault.app')) fail('cle
 if (!restored.publishing.description.en.includes('https://clutchvault.app/en/')) fail('cleared en lost the landing page');
 const memoJob = jobsForPresets(['tt-jp']).find((job) => job.slot === 'ja');
 if (!memoJob) fail('ja job');
-const memoCopy = copyForJob(followedMemo, memoJob, '20261010_Ascent_Phoenix_std_ja_v1', '');
+const memoCopy = copyForJob(followedMemo, memoJob, '20261010_Ascent_A_Phoenix_lineup_ja_v1', '');
 if (!memoCopy.text.includes('gg.clutchvault.app/lineups/phoenix')) fail('export dropped the memo path');
 if (!memoCopy.text.includes('utm_source=tiktok')) fail('export dropped tiktok utm');
 if (memoCopy.text.includes('utm_source=old')) fail('export kept the pasted utm');
 
 const enJob = jobsForPresets(['yt-global']).find((job) => job.slot === 'en');
 if (!enJob) fail('en job');
-const enCopy = copyForJob(published, enJob, '20261010_Ascent_Phoenix_std_en_v1', 'BGM: test');
+const enCopy = copyForJob(published, enJob, '20261010_Ascent_A_Phoenix_lineup_en_v1', 'BGM: test');
 const enBlock = enCopy.text.split('\n\n[ja]')[0] ?? '';
 const enUrls = enBlock.match(/https?:\/\/\S+/g) ?? [];
 const signupUrls = enUrls.filter((url) => url.startsWith('https://t.co/fvdgfFPSXb'));
@@ -365,23 +399,22 @@ const creditLine = enLines.findIndex((line) => line === 'BGM: test');
 if (tagLine < 0 || creditLine < tagLine) fail('credit should follow hashtags');
 const xJob = jobsForPresets(['x-jp'])[0];
 if (!xJob) fail('x job');
-const bareX = copyForJob(published, xJob, '20261010_Ascent_Phoenix_std_x_v1', '');
+const bareX = copyForJob(published, xJob, '20261010_Ascent_A_Phoenix_lineup_x_v1', '');
 if (bareX.text.includes('utm_source') || bareX.text.includes('undefined') || bareX.text.includes('クローズドβ')) {
   fail(`bare x copy should stay incomplete ${bareX.text}`);
 }
 const xSource = structuredClone(followedMemo);
 xSource.publishing.xPost.videoUrl = 'https://youtube.com/shorts/dQw4w9WgXcQ';
 xSource.publishing.xPost.videoUrlEdited = true;
-const xCopy = copyForJob(xSource, xJob, '20261010_Ascent_Phoenix_std_x_v1', '');
-if (xCopy.text.includes('クローズドβ') || /#[A-Za-z0-9_]+/.test(xCopy.text)) fail('x copy used the youtube description');
+const xCopy = copyForJob(xSource, xJob, '20261010_Ascent_A_Phoenix_lineup_x_v1', '');
+if (xCopy.text.includes('クローズドβ') || xCopy.text.includes('#valorantshorts')) fail('x copy used the youtube description');
+if (!xCopy.text.startsWith('【Ascent A / Phoenix / Defender】')) fail(`x heading ${xCopy.text}`);
 if (!xCopy.text.includes('試合用画像 / Lineup') || !xCopy.text.includes('投げ方動画 / Watch')) fail('x template');
+if (!xCopy.text.endsWith('#VAROLANT #定点')) fail('x hashtags');
 if (!xCopy.text.includes('https://youtube.com/shorts/dQw4w9WgXcQ')) fail('x video url');
 if (!xCopy.text.includes('gg.clutchvault.app/lineups/phoenix')) fail(`x spot ${xCopy.text}`);
 if (!xCopy.text.includes('note=1')) fail('x dropped the memo query');
-if ((xCopy.text.match(/utm_source=/g) ?? []).length !== 1) fail(`x utm duplicated ${xCopy.text}`);
-if (!xCopy.text.includes('utm_source=x')) fail('x tracking');
-if (!xCopy.text.includes('utm_medium=card')) fail('x medium');
-if (!xCopy.text.includes('utm_content=20261010_Ascent_Phoenix_std_x_v1')) fail('x content');
+if (/utm_/i.test(xCopy.text)) fail(`x post kept utm ${xCopy.text}`);
 const thumbOnly = jobsForPresets([], ['ja']);
 if (thumbOnly.length !== 1 || thumbOnly[0]?.video || thumbOnly[0]?.finishedCard || !thumbOnly[0]?.thumbnail) {
   fail('thumbnail-only job');
@@ -432,8 +465,80 @@ const warned = precheckAuto(synced, {
   licenseOk: true,
   licenseDetail: '',
 });
-const hashtag = warned.find((item) => item.key === 'title-hashtag');
-if (!hashtag || hashtag.ok || hashtag.severity !== 'warn') fail('title hashtag should warn');
+if (warned.some((item) => item.key === 'title-hashtag')) fail('title hashtag check should be gone');
+if (titleIssues('Hello #valorant').some((item) => item.text.includes('ハッシュタグ'))) {
+  fail('title hashtag warning should be gone');
+}
+const translationSource = followPublishing(createDefaultProject('tr', '2026-01-01T00:00:00.000Z'));
+translationSource.publishing.title.en = 'Free kills #VALORANT';
+translationSource.publishing.description.en = published.publishing.description.en;
+const translated = applyPublishingTranslation(
+  translationSource,
+  {
+    title: { ja: '無料キル', ko: '무료 킬' },
+    description: { ja: 'アセントの定点です。', ko: '어센트 라인업입니다.' },
+  },
+  { fields: ['title', 'description'] },
+);
+if (translated.skipped.length !== 0) fail('first translation should fill template text');
+if (!translated.project.publishing.title.ja.includes('#VALORANT')) fail('ja title dropped a hashtag');
+if (!translated.project.publishing.title.ko?.includes('#VALORANT')) fail('ko title dropped a hashtag');
+if (
+  !translated.project.publishing.description.ja.includes(
+    'ClutchVaultの開発者本人が投稿しています。\n\n#valorantshorts',
+  )
+) {
+  fail('ja credit missing');
+}
+if (!translated.project.publishing.description.ko?.includes('utm_source=')) fail('ko description dropped the url');
+if (!translated.project.guide.publishingEdited.title?.ja) fail('translated title should stay hand-owned');
+const hand = structuredClone(translated.project);
+hand.publishing.title.ja = '手で直した';
+const keptTranslation = applyPublishingTranslation(hand, { title: { ja: '新しい訳', ko: '새 번역' } }, { fields: ['title'] });
+if (keptTranslation.project.publishing.title.ja !== '手で直した') fail('hand edited title was overwritten');
+if (!keptTranslation.skipped.some((item) => item.field === 'title' && item.language === 'ja')) fail('ja title should be skipped');
+if (keptTranslation.project.publishing.title.ko !== '새 번역 #VALORANT') {
+  fail(`ko title should update ${keptTranslation.project.publishing.title.ko}`);
+}
+const forced = applyPublishingTranslation(
+  keptTranslation.project,
+  { title: { ja: '新しい訳', ko: '새 번역' } },
+  { fields: ['title'], force: true },
+);
+if (forced.project.publishing.title.ja !== '新しい訳 #VALORANT') fail('force should overwrite the hand edit');
+const suffixed = structuredClone(forced.project);
+suffixed.publishing.title.en = 'Free kills | Ascent A Phoenix Lineup';
+const withSuffix = applyPublishingTranslation(
+  suffixed,
+  { title: { ja: '無料キル | 訳した末尾', ko: '무료 킬 | 끝' } },
+  { fields: ['title'], force: true },
+);
+if (withSuffix.project.publishing.title.en !== 'Free kills | Ascent A Phoenix Lineup') {
+  fail('english title suffix was rewritten');
+}
+const jaTitle = composePublishingTitle(suffixed, 'ja', '無料キル');
+const koTitle = composePublishingTitle(suffixed, 'ko', '무료 킬');
+if (withSuffix.project.publishing.title.ja !== jaTitle) {
+  fail(`ja title suffix ${withSuffix.project.publishing.title.ja}`);
+}
+if (withSuffix.project.publishing.title.ko !== koTitle) {
+  fail(`ko title suffix ${withSuffix.project.publishing.title.ko}`);
+}
+const leadTitle = composePublishingTitle(created, 'en', 'Free kills | ignore this tail');
+if (leadTitle !== 'Free kills | Ascent A Phoenix Lineup #valorant') fail(`english lead title ${leadTitle}`);
+const staleProject = structuredClone(forced.project);
+staleProject.publishing.title.en = 'Changed hook';
+if (!publishingTranslationStale(staleProject, 'title', 'ja')) fail('english change should mark the translation stale');
+const withoutYoutube = structuredClone(translated.project);
+withoutYoutube.guide.exportPresets = ['tt-jp'];
+if (!publishingShowsKorean(withoutYoutube)) fail('korean copy should stay visible after youtube is turned off');
+if (!publishingTranslationLanguages(withoutYoutube).includes('ko')) fail('korean translation target was dropped');
+const japaneseOnly = followPublishing(createDefaultProject('ja-only', '2026-01-01T00:00:00.000Z'));
+japaneseOnly.guide.exportPresets = ['tt-jp'];
+japaneseOnly.publishing.title.ko = undefined;
+japaneseOnly.publishing.description.ko = undefined;
+japaneseOnly.publishing.hashtags.ko = undefined;
+if (publishingShowsKorean(japaneseOnly)) fail('japanese-only project should not grow a korean column');
 
 created.posts = [
   {
@@ -479,5 +584,28 @@ const sideX = cardStillFrames('aim', 'stand').xCard;
 if (sidePreview.width !== sideX.width || !sidePreview.matchesX) fail('stand preview should use the wider X crop');
 const stackPreview = stillPreviewFrame('stack', 'stand');
 if (stackPreview.matchesX) fail('stack preview should use the card crop');
+
+const retiredGuide = parseProject({
+  ...JSON.parse(JSON.stringify(created)),
+  templateId: 't-guide',
+  timelineEdited: true,
+  timeline: {
+    durationSec: 24,
+    items: [
+      {
+        id: 'guide-hook',
+        sceneKey: 'hook',
+        presentation: 'guide-title',
+        start: 0,
+        duration: 2.5,
+      },
+    ],
+    volumePoints: [],
+    effects: [],
+  },
+});
+if (retiredGuide.templateId !== 't-std') fail(`t-guide should become t-std, got ${retiredGuide.templateId}`);
+if (retiredGuide.timelineEdited) fail('retired t-guide should rebuild the T-STD timeline');
+if (retiredGuide.timeline !== null) fail('retired t-guide timeline should be cleared');
 
 console.log('schema migration ok');

@@ -218,28 +218,34 @@ export const ShortsChrome = ({
         </div>
       </div>
       <Scrubber playerRef={playerRef} origin={origin} span={span} />
-      <nav className="gd-shorts-nav">
-        <div className="gd-shorts-tab">
-          <HomeIcon />
-          <span>ホーム</span>
-        </div>
-        <div className="gd-shorts-tab is-on">
-          <ShortsIcon />
-          <span>ショート</span>
-        </div>
-        <div className="gd-shorts-create">
-          <PlusIcon />
-        </div>
-        <div className="gd-shorts-tab">
-          <SubsIcon />
-          <span>登録チャンネル</span>
-        </div>
-        <div className="gd-shorts-tab">
-          <img src={h1IconUrl} alt="" draggable={false} />
-          <span>マイページ</span>
-        </div>
-        <div className="gd-shorts-home" />
-      </nav>
     </div>
   </div>
+);
+
+/** 再生領域の下に置く不透明なタブ。映像はここまで伸ばさない。 */
+export const ShortsTabBar = ({ height }: { height: number }): ReactNode => (
+  <nav className="gd-shorts-nav" style={{ height }} aria-hidden="true">
+    <div className="gd-shorts-nav-tabs">
+      <div className="gd-shorts-tab">
+        <HomeIcon />
+        <span>ホーム</span>
+      </div>
+      <div className="gd-shorts-tab is-on">
+        <ShortsIcon />
+        <span>ショート</span>
+      </div>
+      <div className="gd-shorts-create">
+        <PlusIcon />
+      </div>
+      <div className="gd-shorts-tab">
+        <SubsIcon />
+        <span>登録チャンネル</span>
+      </div>
+      <div className="gd-shorts-tab">
+        <img src={h1IconUrl} alt="" draggable={false} />
+        <span>マイページ</span>
+      </div>
+    </div>
+    <div className="gd-shorts-home" />
+  </nav>
 );

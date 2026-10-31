@@ -7,12 +7,36 @@ import type {
   AiStatus,
 } from './ai';
 import type { AnalyticsBundle, AnalysisTask, Insight, MetricSnapshot } from './schema/analytics';
+import type {
+  CompetitorDetail,
+  CompetitorListItem,
+  CompetitorPreview,
+  CompetitorReference,
+  CompetitorResult,
+  CompetitorSyncView,
+} from './schema/competitor';
+import type {
+  CompetitorJot,
+  CompetitorOverview,
+  FeatureIdeaResult,
+  FeatureTag,
+  JotPage,
+  ProfileEntry,
+  ProfileMatrix,
+  ProfileOptions,
+  VideoPage,
+} from './schema/competitor-observation';
 import type { DeliveryPresetId } from './delivery-presets';
 import type { PublishingSettings, PublishingView, StudioNextAction, WorkflowTask } from './publishing';
 import type { InheritItem, Project } from './schema/project';
 import type { SceneKey } from './schema/project-keys';
 import type { VideoStructureTemplate } from './video-structure';
+import type { YoutubeAnalysisRow, YoutubeExperimentLink, YoutubePostView } from './youtube-compare';
 import type { SyncRun, YoutubeStatus, YoutubeSyncProgress, YoutubeSyncSettings } from './schema/youtube';
+import type {
+  YoutubePublishProgress,
+  YoutubePublishView,
+} from './schema/youtube-publish';
 import type {
   AudioRegistration,
   AudioTrack,
@@ -192,6 +216,9 @@ export interface StudioApi {
   }): Promise<AnalyticsBundle>;
   consumeAnalyticsDecision(decisionId: string): Promise<AnalyticsBundle>;
   exportAnalyticsCsv(): Promise<string | null>;
+  exportYoutubeAnalysis(kind: 'csv' | 'json'): Promise<string | null>;
+  saveYoutubeManual(input: unknown): Promise<YoutubePostView>;
+  linkAnalyticsPosts(input: { experimentId: string; postIds: string[]; windowKind: YoutubeExperimentLink['windowKind'] }): Promise<AnalyticsBundle>;
   getAiStatus(): Promise<AiStatus>;
   getAiUsage(): Promise<AiPlanUsage | null>;
   setAiProvider(provider: AiProviderChoice): Promise<AiStatus>;
@@ -201,11 +228,64 @@ export interface StudioApi {
   onExportProgress(callback: (progress: ExportProgress) => void): () => void;
   getYoutubeStatus(): Promise<YoutubeStatus>;
   setYoutubeClient(clientId: string, clientSecret?: string): Promise<YoutubeStatus>;
-  connectYoutube(): Promise<YoutubeStatus>;
+  connectYoutube(mode?: 'read' | 'publish'): Promise<YoutubeStatus>;
   cancelYoutubeLogin(): Promise<void>;
   disconnectYoutube(): Promise<YoutubeStatus>;
+  disconnectYoutubeLocal(): Promise<YoutubeStatus>;
   setYoutubeSettings(patch: Partial<YoutubeSyncSettings>): Promise<YoutubeStatus>;
   syncYoutube(): Promise<SyncRun>;
+  getYoutubeAnalysisIndex(): Promise<YoutubeAnalysisRow[]>;
+  getYoutubePostView(postId: string): Promise<YoutubePostView>;
   cancelYoutubeSync(): Promise<void>;
   onYoutubeProgress(callback: (progress: YoutubeSyncProgress) => void): () => void;
+  getYoutubePublish(projectId: string, taskId: string): Promise<YoutubePublishView>;
+  createYoutubePublishDraft(input: unknown): Promise<YoutubePublishView>;
+  updateYoutubePublishDraft(input: unknown): Promise<YoutubePublishView>;
+  startYoutubeUpload(jobId: string, revision: number): Promise<YoutubePublishView>;
+  reuploadYoutube(jobId: string, revision: number): Promise<YoutubePublishView>;
+  pauseYoutubeUpload(jobId: string): Promise<YoutubePublishView>;
+  resumeYoutubeUpload(jobId: string, revision: number): Promise<YoutubePublishView>;
+  retryYoutubePublishStep(jobId: string, revision: number, step: 'thumbnail' | 'playlist'): Promise<YoutubePublishView>;
+  openYoutubeStudio(jobId: string): Promise<{ url: string }>;
+  confirmYoutubeStudioItem(input: unknown): Promise<YoutubePublishView>;
+  refreshYoutubePublish(jobId: string): Promise<YoutubePublishView>;
+  previewYoutubePublication(input: unknown): Promise<YoutubePublishView>;
+  applyYoutubePublication(input: unknown): Promise<YoutubePublishView>;
+  bindYoutubeVideoPreview(jobId: string, videoId: string): Promise<YoutubePublishView>;
+  bindYoutubeVideo(input: unknown): Promise<YoutubePublishView>;
+  listYoutubePlaylists(): Promise<Array<{ id: string; title: string }>>;
+  listYoutubeCategories(): Promise<Array<{ id: string; title: string; assignable: boolean }>>;
+  onYoutubePublishProgress(callback: (progress: YoutubePublishProgress) => void): () => void;
+  previewCompetitorRegistration(text: string): Promise<CompetitorResult<CompetitorPreview>>;
+  confirmCompetitorRegistration(previewId: string, keys: string[]): Promise<CompetitorResult<{ channels: CompetitorListItem[] }>>;
+  listCompetitors(): Promise<CompetitorResult<CompetitorListItem[]>>;
+  competitorDetail(id: string): Promise<CompetitorResult<CompetitorDetail>>;
+  updateCompetitor(input: unknown): Promise<CompetitorResult<CompetitorDetail>>;
+  archiveCompetitor(id: string): Promise<CompetitorResult<CompetitorListItem>>;
+  removeCompetitor(id: string, keepNotes: boolean): Promise<CompetitorResult<{ id: string }>>;
+  syncCompetitors(input?: unknown): Promise<CompetitorResult<CompetitorSyncView>>;
+  cancelCompetitorSync(): Promise<CompetitorResult<CompetitorSyncView>>;
+  competitorSyncStatus(): Promise<CompetitorResult<CompetitorSyncView>>;
+  onCompetitorSyncProgress(callback: (view: CompetitorSyncView) => void): () => void;
+  competitorOverview(): Promise<CompetitorResult<CompetitorOverview>>;
+  competitorReferenceState(ids: string[]): Promise<CompetitorResult<CompetitorReference[]>>;
+  classifyCompetitor(input: unknown): Promise<CompetitorResult<{ saved: true }>>;
+  openCompetitorUrl(url: string): Promise<CompetitorResult<{ opened: true }>>;
+  updateCompetitorSettings(input: unknown): Promise<CompetitorResult<CompetitorSyncView>>;
+  competitorVideos(query: unknown): Promise<CompetitorResult<VideoPage>>;
+  competitorJots(query: unknown): Promise<CompetitorResult<JotPage>>;
+  saveCompetitorJot(input: unknown): Promise<CompetitorResult<CompetitorJot>>;
+  removeCompetitorJot(id: string): Promise<CompetitorResult<{ id: string }>>;
+  handOffCompetitorJots(ids: string[]): Promise<CompetitorResult<{ count: number }>>;
+  competitorProfileMatrix(subjects: string[]): Promise<CompetitorResult<ProfileMatrix>>;
+  saveCompetitorProfile(input: unknown): Promise<CompetitorResult<ProfileEntry>>;
+  competitorProfileOptions(): Promise<CompetitorResult<ProfileOptions>>;
+  competitorTags(): Promise<CompetitorResult<FeatureTag[]>>;
+  saveCompetitorTag(input: unknown): Promise<CompetitorResult<FeatureTag>>;
+  archiveCompetitorTag(id: string): Promise<CompetitorResult<{ id: string }>>;
+  assignCompetitorTag(input: unknown): Promise<CompetitorResult<{ count: number }>>;
+  unassignCompetitorTag(input: unknown): Promise<CompetitorResult<{ ok: true }>>;
+  addCompetitorFocusUrls(input: unknown): Promise<CompetitorResult<{ added: string[]; invalid: string[] }>>;
+  setCompetitorFocus(input: unknown): Promise<CompetitorResult<{ videoId: string; focus: boolean }>>;
+  competitorFeatureIdeas(input: unknown): Promise<CompetitorResult<FeatureIdeaResult>>;
 }

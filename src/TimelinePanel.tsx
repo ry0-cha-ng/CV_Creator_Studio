@@ -21,6 +21,7 @@ import {
   splitTimelineItemAt,
   defaultLoopRange,
   playbackClip,
+  syncTimelineDurationsToScenes,
   trimTimelineItem,
   withDemoDuration,
 } from '../shared/timeline';
@@ -401,12 +402,14 @@ export const TimelinePanel = ({
       const base = activeTimeline(current);
       const timelineNext = typeof next === 'function' ? next(base) : next;
       return withDemoDuration(
-        {
-          ...current,
-          structureTemplateId: undefined,
-          timelineEdited: true,
-          timeline: timelineNext,
-        },
+        syncTimelineDurationsToScenes(
+          {
+            ...current,
+            structureTemplateId: undefined,
+            timelineEdited: true,
+          },
+          timelineNext,
+        ),
         timelineNext,
       );
     });
@@ -618,7 +621,7 @@ export const TimelinePanel = ({
       const end = start + raw;
       const duration = snapTime(end) - start;
       editTimeline(
-        (current) => trimTimelineItem(current, item.id, edge, duration, project.templateId),
+        (current) => trimTimelineItem(current, item.id, edge, duration),
         false,
       );
     };
@@ -820,7 +823,7 @@ export const TimelinePanel = ({
   const bgm = project.audio.bgm;
   const bgmTrack = tracks.find((track) => track.id === bgm?.audioTrackId);
   const bgmDuration = bgm ? bgmDurationForProject(project) : 0;
-  const templateLabel = project.templateId === 't-guide' ? 'T-GUIDE ガイド型' : 'T-STD 標準ショート';
+  const templateLabel = 'T-STD 標準ショート';
 
   const volumeLine = (channel: 'game' | 'bgm'): string => {
     const times = [0, ...timeline.volumePoints.map((point) => point.time), timeline.durationSec];
@@ -976,31 +979,7 @@ export const TimelinePanel = ({
       <div className="tl-resizer" onPointerDown={startResize} />
       <div className="tl-toolbar">
         <span className="tl-title">タイムライン</span>
-        <select
-          className="tl-template"
-          aria-label="テンプレート"
-          value={project.templateId}
-          onChange={(event) => {
-            historyArmed.current = false;
-            pushUndo();
-            onChange((current) => ({
-              ...current,
-              templateId: event.target.value as Project['templateId'],
-              timelineEdited: false,
-              timeline: null,
-            }));
-            historyArmed.current = false;
-          }}
-        >
-          <option value="t-std">T-STD 標準ショート</option>
-          <option value="t-guide">T-GUIDE ガイド型</option>
-        </select>
-        <button
-          type="button"
-          onClick={openStructureEditor}
-          disabled={project.templateId === 't-guide'}
-          title={project.templateId === 't-guide' ? 'ガイド型のシーン構成は固定です' : undefined}
-        >
+        <button type="button" onClick={openStructureEditor}>
           構成パターン · {structureLabel(
             project.timelineEdited
               ? timeline.items.map((item) => item.sceneKey)

@@ -1,7 +1,8 @@
 import { createContext, useContext } from 'react';
 import type { AnalyticsBundle, PrimaryVariable } from '../../shared/schema/analytics';
+import type { YoutubeExperimentLink } from '../../shared/youtube-compare';
 
-export type DetailTab = 'overview' | 'posts' | 'experiments' | 'insights';
+export type DetailTab = 'overview' | 'posts' | 'experiments' | 'insights' | 'competitors';
 export type AnalyticsPage = 'home' | 'guide' | 'weekly' | 'experiment-new';
 
 export type AnalyticsContextValue = {
@@ -12,7 +13,7 @@ export type AnalyticsContextValue = {
   openReview: (taskId?: string) => void;
   openDetail: (tab: DetailTab) => void;
   openWeekly: () => void;
-  openExperimentNew: (variable?: PrimaryVariable) => void;
+  openExperimentNew: (variable?: PrimaryVariable, link?: YoutubeExperimentLink) => void;
   openProject: (projectId: string) => void;
 };
 

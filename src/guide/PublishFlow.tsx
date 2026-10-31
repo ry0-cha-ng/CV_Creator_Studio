@@ -14,6 +14,7 @@ import {
   doneCount,
   isPublishTask,
   manualPrecheckReady,
+  publishingPresets,
   qaReady,
   remainingCount,
   taskBlurb,
@@ -27,18 +28,13 @@ import type { Project } from '../../shared/schema/project';
 import { activeTimeline } from '../../shared/timeline';
 import { mediaUrl } from './media';
 import { XPostComposer } from './XPostComposer';
+import { YoutubePublishPanel } from './YoutubePublishPanel';
 
 const presetOf = (value: string | undefined): DeliveryPresetId | undefined =>
   value && value in DELIVERY_PRESETS ? (value as DeliveryPresetId) : undefined;
 
 const copyLanguage = (preset: DeliveryPresetId): 'ja' | 'en' | 'ko' =>
   DELIVERY_PRESETS[preset].copyLanguages[0] ?? 'ja';
-
-const textOf = (project: Project, field: 'title' | 'description' | 'hashtags', language: 'ja' | 'en' | 'ko'): string => {
-  const value = project.publishing[field];
-  if (language === 'ko') return value.ko ?? value.en;
-  return value[language];
-};
 
 const platformName = (platform: 'youtube' | 'tiktok' | 'x'): string =>
   platform === 'youtube' ? 'YouTube' : platform === 'tiktok' ? 'TikTok' : 'X';
@@ -152,6 +148,7 @@ export const PublishFlow = ({
 
   if (!view.started && view.workflow?.status !== 'done') {
     const exportedAt = clock(project.guide.lastExport.at);
+    const presets = publishingPresets(project);
     return (
       <div className="pw pw-intro">
         <header className="pw-head">
@@ -163,13 +160,13 @@ export const PublishFlow = ({
           <div className="pw-start-top">
             <strong>✓ 書き出し完了</strong>
             <span>
-              {[exportedAt, `${project.guide.exportPresets.length}プリセット`, `${view.files.length}ファイル`]
+              {[exportedAt, `${presets.length}プリセット`, `${view.files.length}ファイル`]
                 .filter(Boolean)
                 .join(' · ')}
             </span>
           </div>
           <div className="pw-start-grid">
-            {project.guide.exportPresets.map((preset) => (
+            {presets.map((preset) => (
               <div key={preset}>
                 <strong>{platformName(DELIVERY_PRESETS[preset].platform)}</strong>
                 <span>{DELIVERY_PRESETS[preset].detail}</span>
@@ -177,15 +174,19 @@ export const PublishFlow = ({
               </div>
             ))}
           </div>
-          <p>
-            この順に進めます：
-            {view.tasks.map((task) => taskShortLabel(task)).join(' → ')}（{view.tasks.length}件）
-          </p>
+          {presets.length === 0 ? (
+            <p>投稿先のプリセットがありません。手順9でプリセットを選んで書き出してください。</p>
+          ) : (
+            <p>
+              この順に進めます：
+              {view.tasks.map((task) => taskShortLabel(task)).join(' → ')}（{view.tasks.length}件）
+            </p>
+          )}
           <div className="pw-start-actions">
             <button
               type="button"
               className="pw-primary"
-              disabled={busy}
+              disabled={busy || presets.length === 0}
               onClick={() =>
                 void run(async () => setView(await window.studio.startPublishing(project.id)))
               }
@@ -313,7 +314,7 @@ const FlowRail = ({
         <span className="pw-rail-kicker">投稿運用</span>
         <strong>{project.title}</strong>
         <em>
-          書き出し {exportedAt || '—'} · {project.guide.exportPresets.join(' · ')}
+          書き出し {exportedAt || '—'} · {publishingPresets(project).join(' · ')}
         </em>
       </div>
       <ol aria-label="投稿運用の進み具合" style={{ gridTemplateColumns: `repeat(${view.tasks.length}, minmax(0, 1fr))` }}>
@@ -426,6 +427,15 @@ const TaskBody = ({
           </p>
         )}
         {task.type === 'x-publish' && <XPostComposer project={project} />}
+        {task.type === 'youtube-publication-verify' && (
+          <YoutubePublishPanel
+            project={project}
+            taskId={view.tasks.find((item) => item.type === 'youtube-publish' && item.preset === task.preset)?.id ?? task.id}
+            preset={presetOf(task.preset) ?? 'yt-global'}
+            reviewing={reviewing}
+            onView={onView}
+          />
+        )}
         {task.type === 'pre-publish-check' && (
           <Precheck project={project} view={view} task={task} reviewing={reviewing} busy={busy} onRun={onRun} onView={onView} />
         )}
@@ -535,7 +545,7 @@ const Precheck = ({
           <span className="pw-copyline">
             <strong>{manual.label}</strong>
             <span>
-              {project.guide.exportPresets.map((preset) => DELIVERY_PRESETS[preset].label).join(' · ')}
+              {publishingPresets(project).map((preset) => DELIVERY_PRESETS[preset].label).join(' · ')}
               {project.experimentRef ? ` · ${project.experimentRef.arm === 'control' ? 'Control' : 'Variant'}` : ' · 実験なし'}
             </span>
           </span>
@@ -630,8 +640,17 @@ const PublishTask = ({
     );
   };
   return (
-    <div className="pw-publish">
+    <div className={`pw-publish${task.type === 'x-publish' ? ' is-x' : ''}`}>
       <div className="pw-col">
+        {task.type === 'youtube-publish' && preset && (
+          <YoutubePublishPanel
+            project={project}
+            taskId={task.id}
+            preset={preset}
+            reviewing={reviewing}
+            onView={onView}
+          />
+        )}
         <div className="pw-meter">
           <strong>必須</strong>
           <span className="gd-mono">
@@ -807,7 +826,7 @@ const Verify = ({
   };
   const publishTask = view.tasks.find((item) => item.preset === tab && isPublishTask(item.type));
   const problems = items.some((item) => marks[item.key] === 'problem');
-  const ready = qaReady({ ...task, qa }, presets);
+  const ready = qaReady({ ...task, qa }, presets, view.workflow?.skipQaPresets);
   const next = view.tasks.find((item) => item.sortOrder > task.sortOrder);
   const left = presets.reduce((sum, preset) => {
     const entries = QA_ITEMS[DELIVERY_PRESETS[preset].platform];
@@ -946,12 +965,10 @@ const RecordDone = ({
 const Materials = ({ project, view, preset }: { project: Project; view: PublishingView; preset: DeliveryPresetId }) => {
   const language = copyLanguage(preset);
   const spec = DELIVERY_PRESETS[preset];
+  const languages = spec.copyLanguages;
   const files = view.files.filter((file) => file.preset === preset && file.kind !== 'copy');
   const poster = files.find((file) => file.kind === 'thumbnail' || file.kind === 'xCard') ?? files[0];
   const link = trackingFor(project, preset, guessBasename(project, preset), language);
-  const description = replaceClutchVaultUrl(textOf(project, 'description', language), link);
-  const title = textOf(project, 'title', language);
-  const hashtags = textOf(project, 'hashtags', language);
   const seconds = activeTimeline(project).durationSec;
   return (
     <aside className="pw-side" aria-label="投稿に使うもの">
@@ -982,13 +999,27 @@ const Materials = ({ project, view, preset }: { project: Project; view: Publishi
         <p className="xpost-side-note">投稿文は左の欄で確認してコピーします。添付するカードは上の画像です。</p>
       ) : (
         <>
-          <CopyBlock
-            label={spec.platform === 'tiktok' ? 'キャプション' : 'タイトル'}
-            text={title}
-            meta={`${title.length} / ${spec.platform === 'tiktok' ? 2200 : 100}`}
-          />
-          <CopyBlock label="説明文" text={description} meta={languageName(language)} />
-          <CopyBlock label="ハッシュタグ" text={hashtags} />
+          {languages.map((copyLanguageId) => {
+            const copyLink = trackingFor(project, preset, guessBasename(project, preset), copyLanguageId);
+            const description = replaceClutchVaultUrl(project.publishing.description[copyLanguageId] ?? '', copyLink);
+            const title = project.publishing.title[copyLanguageId] ?? '';
+            const hashtags = project.publishing.hashtags[copyLanguageId] ?? '';
+            return (
+              <div key={copyLanguageId} className="pw-lang-copy">
+                {languages.length > 1 && <span className="pw-chip">{languageName(copyLanguageId)}</span>}
+                <CopyBlock
+                  label={spec.platform === 'tiktok' ? 'キャプション' : 'タイトル'}
+                  text={title}
+                  meta={`${title.length} / ${spec.platform === 'tiktok' ? 2200 : 100}`}
+                />
+                <CopyBlock label="説明文" text={description} meta={languageName(copyLanguageId)} />
+                <CopyBlock label="ハッシュタグ" text={hashtags} />
+              </div>
+            );
+          })}
+          {spec.platform === 'youtube' && project.publishing.pinnedComment.trim() && (
+            <CopyBlock label="固定コメント" text={project.publishing.pinnedComment} meta="英語・自分で固定" />
+          )}
           <CopyBlock label="ClutchVault URL" text={link} meta={spec.platform === 'tiktok' ? 'プロフィール用' : 'UTM付き'} mono />
         </>
       )}
@@ -999,7 +1030,7 @@ const Materials = ({ project, view, preset }: { project: Project; view: Publishi
 const FileAside = ({ project, view }: { project: Project; view: PublishingView }) => (
   <aside className="pw-side" aria-label="書き出したもの">
     <span className="pw-side-kicker">書き出したもの</span>
-    {project.guide.exportPresets.map((preset) => (
+    {publishingPresets(project).map((preset) => (
       <section key={preset} className="pw-bundle">
         <div className="pw-bundle-top">
           <strong>{platformName(DELIVERY_PRESETS[preset].platform)}</strong>
@@ -1024,7 +1055,7 @@ const FileAside = ({ project, view }: { project: Project; view: PublishingView }
 const RecordAside = ({ project }: { project: Project }) => (
   <aside className="pw-side" aria-label="記録した投稿">
     <span className="pw-side-kicker">記録した投稿（Post）</span>
-    {project.guide.exportPresets.map((preset) => {
+    {publishingPresets(project).map((preset) => {
       const post = project.posts.find((item) => item.preset === preset);
       const arm = project.experimentRef ? (project.experimentRef.arm === 'control' ? 'Control' : 'Variant') : '';
       return (
@@ -1215,7 +1246,7 @@ const PostLog = ({
       </button>
       {open && (
         <div className="pw-log-table">
-          {project.guide.exportPresets.map((preset) => {
+          {publishingPresets(project).map((preset) => {
             const post = project.posts.find((item) => item.preset === preset);
             const value = drafts[preset] ?? post?.url ?? '';
             return (

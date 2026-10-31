@@ -1,20 +1,23 @@
 import { aimZoomOverlapWarning } from './aim-zoom';
 import {
   likeCtaActive,
-  likeCtaFitWarning,
   resolveLikeCtaText,
   resolveCtaDesign,
-  s4CtaOverlapDetail,
   S4_CTA_COPY,
 } from './s4-cta';
-import { s7BrandOverlapDetail, s7CtaDuplicate, s7CtaLineCount } from './s7-cta';
-import { platformsFor, presetOutputsLabel } from './delivery-presets';
+import { s7CtaDuplicate } from './s7-cta';
+import {
+  DELIVERY_PRESET_ORDER,
+  DELIVERY_PRESETS,
+  platformsFor,
+  presetOutputsLabel,
+  type DeliveryPresetId,
+} from './delivery-presets';
 import { AGENT_NAMES_JA, MAP_NAMES_JA } from './valorant-labels';
 import {
   HOOK_PATTERNS,
   defaultPublishing,
   ensureTrackingUrl,
-  koreanTitleUsesEnglishHook,
   publishingUrls,
 } from './production';
 import type { AudioTrack, Platform } from './schema/audio';
@@ -28,6 +31,8 @@ import {
 } from './schema/project';
 import type { SceneKey } from './schema/project-keys';
 import { thumbnailIconWarning } from './thumbnail';
+import { focusHookWarning, focusUpscale, THUMB_FOCUS } from './thumbnail-focus';
+import { focusFrameOf, focusOutsideDetail, sceneFocusEffects } from './layout-focus';
 import { syncedXPost } from './x-post';
 import {
   SCENE_BAND,
@@ -44,18 +49,35 @@ import { configuredSceneOrder, sceneOrderLabel } from './video-structure';
 export const GUIDE_STEPS = [
   { id: 1, name: '定点情報', hint: 'マップ・エージェント・投げ方' },
   { id: 2, name: '動画選択', hint: '1〜3本を登録する' },
-  { id: 3, name: '切り抜き', hint: 'S1→S2→S3→S4→S6（任意）→S7' },
-  { id: 4, name: 'カード用画像', hint: '立ち位置→合わせ位置→発動' },
-  { id: 5, name: 'テロップ', hint: 'フック・STAND・AIM・実戦' },
   { id: 6, name: 'BGM・効果音', hint: 'BGM・効果音・ゲーム音' },
-  { id: 7, name: '最終確認', hint: '日英の通し再生とチェック' },
+  { id: 4, name: 'カード用画像', hint: '立ち位置→合わせ位置→発動' },
+  { id: 3, name: '切り抜き', hint: 'S1→S2→S3→S4→S6（任意）→S7' },
+  { id: 5, name: 'テロップ', hint: 'フック・タイトル・固定コメントの案' },
   { id: 8, name: '投稿内容', hint: 'タイトル・説明文・タグ' },
+  { id: 7, name: '最終確認', hint: '日英の通し再生とチェック' },
   { id: 9, name: '書き出し', hint: '投稿先を選んで書き出す' },
   { id: 10, name: '投稿・運用', hint: '投稿して公開を確認する' },
 ] as const;
 
 export type GuideStepId = (typeof GUIDE_STEPS)[number]['id'];
 export type StepStatus = 'idle' | 'active' | 'done' | 'warn';
+
+/** 左の手順リストに出す番号。id は画面の種類で、並びとは別。 */
+export const guideStepNumber = (id: GuideStepId): number => {
+  const index = GUIDE_STEPS.findIndex((step) => step.id === id);
+  return index < 0 ? id : index + 1;
+};
+
+export const guideStepAfter = (id: GuideStepId): GuideStepId | null => {
+  const index = GUIDE_STEPS.findIndex((step) => step.id === id);
+  return GUIDE_STEPS[index + 1]?.id ?? null;
+};
+
+export const guideStepBefore = (id: GuideStepId): GuideStepId | null => {
+  const index = GUIDE_STEPS.findIndex((step) => step.id === id);
+  if (index <= 0) return null;
+  return GUIDE_STEPS[index - 1]?.id ?? null;
+};
 
 const HOOK_ORDER: HookPattern[] = [
   'result',
@@ -101,16 +123,11 @@ export const sceneHasRange = (project: Project, sceneKey: SceneKey): boolean =>
   Boolean(sceneClip(project, sceneKey));
 
 const requiredTrimKeys = (project: Project): SceneKey[] =>
-  project.templateId === 't-guide'
-    ? ['hook', 'stand', 'demo']
-    : configuredSceneOrder(project).filter((sceneKey) =>
-        (['hook', 'stand', 'aim', 'throw'] as SceneKey[]).includes(sceneKey),
-      );
+  configuredSceneOrder(project).filter((sceneKey) =>
+    (['hook', 'stand', 'aim', 'throw'] as SceneKey[]).includes(sceneKey),
+  );
 
-export const trimScenes = (project: Project): SceneKey[] =>
-  project.templateId === 't-guide'
-    ? ['hook', 'stand', 'card', 'demo']
-    : configuredSceneOrder(project);
+export const trimScenes = (project: Project): SceneKey[] => configuredSceneOrder(project);
 
 const lineupReady = (project: Project): boolean =>
   Boolean(
@@ -125,7 +142,6 @@ const REVIEW_CAPTIONS = ['hook', 'stand', 'throw', 'demo'] as const;
 
 const reviewCaptionIds = (project: Project): Array<(typeof REVIEW_CAPTIONS)[number]> =>
   REVIEW_CAPTIONS.filter((id) => {
-    if (project.templateId === 't-guide') return true;
     const sceneKey = id === 'throw' ? 'aim' : id;
     if (!configuredSceneOrder(project).includes(sceneKey)) return false;
     return id !== 'demo' || sceneHasRange(project, 'demo');
@@ -149,6 +165,18 @@ const resolveCaption = (text: string, project: Project, language: Language): str
     .replaceAll('{aimDescription}', project.lineup.aimDescription[language])
     .replaceAll('{br}', '\n');
 
+/** フック以外のテロップが表示警告になる日本語の文字数。 */
+export const CAPTION_JA_MAX_CHARS = 15;
+
+/** フックが表示警告になる日本語の文字数。 */
+export const HOOK_JA_MAX_CHARS = 20;
+
+/** フックの行数チェック。改行2つまでと同じ。 */
+export const HOOK_CAPTION_MAX_LINES = 3;
+
+/** 英語テロップが表示警告になる語数。 */
+export const CAPTION_EN_MAX_WORDS = 6;
+
 export const captionMetrics = (
   text: string,
   project: Project,
@@ -158,12 +186,12 @@ export const captionMetrics = (
   const resolved = resolveCaption(text, project, language).replaceAll(/[[\]]/g, '');
   const lines = resolved.split('\n');
   const body = lines.join('').trim();
-  const maxLines = captionId === 'hook' ? 3 : 2;
-  const englishWordLimit = project.englishCaptionPreset === 'en-concise' ? 4 : 5;
+  const maxLines = captionId === 'hook' ? HOOK_CAPTION_MAX_LINES : 2;
+  const englishWordLimit = CAPTION_EN_MAX_WORDS;
   const overflow =
     lines.length > maxLines ||
     (language === 'ja'
-      ? [...body].length > 15
+      ? [...body].length > (captionId === 'hook' ? HOOK_JA_MAX_CHARS : CAPTION_JA_MAX_CHARS)
       : body.split(/\s+/).filter(Boolean).length > englishWordLimit);
   return { lines: lines.length, overflow, empty: !resolved.trim() };
 };
@@ -195,6 +223,7 @@ export const exportContentStamp = (project: Project): string =>
     exportWithoutBgm: project.guide.exportWithoutBgm,
     thumbnailOnly: project.guide.thumbnailOnly,
     thumbnailFrame: project.thumbnailFrame,
+    ...(project.thumbnail ? { thumbnail: project.thumbnail } : {}),
   });
 
 export type ReviewItem = {
@@ -205,23 +234,11 @@ export type ReviewItem = {
   step?: GuideStepId;
 };
 
-export const durationInBand = (project: Project): boolean => {
-  const seconds = activeTimeline(project).durationSec;
-  if (project.templateId === 't-guide') return seconds >= 20 && seconds <= 28;
-  return seconds >= 26 && seconds <= 60;
-};
-
-export const durationGoalLabel = (project: Project): string =>
-  project.templateId === 't-guide' ? '20〜28秒' : '26〜60秒';
-
 const s4Review = (project: Project): ReviewItem[] => {
   const hidden = project.captions.find((caption) => caption.id === 'cta')?.hidden === true;
   if (likeCtaActive(project)) {
     const text = resolveLikeCtaText(project);
     const shown = (['ja', 'en'] as const).some((language) => text.line1[language].trim());
-    const fit = (['ja', 'en'] as const)
-      .map((language) => likeCtaFitWarning(language, text.before[language], text.after[language]))
-      .find((item): item is string => Boolean(item));
     return [
       {
         id: 'cta-duplicate',
@@ -233,20 +250,12 @@ const s4Review = (project: Project): ReviewItem[] => {
         level: 'ok',
         step: 5,
       },
-      {
-        id: 'brand-lockup',
-        label: 'ClutchVaultの表示',
-        detail: fit ?? '高評価CTAにCVアイコンとプロフィール案内はなく、H1gherは映像の下にあります',
-        level: fit ? 'warn' : 'ok',
-        step: fit ? 5 : undefined,
-      },
     ];
   }
   const stored = project.templateParams.s4Cta;
   const mainJa = (stored?.main.ja ?? S4_CTA_COPY.ja.main).trim();
   const mainEn = (stored?.main.en ?? S4_CTA_COPY.en.main).trim();
   const shown = Boolean(mainJa || mainEn);
-  const overlap = s4CtaOverlapDetail();
   return [
     {
       id: 'cta-duplicate',
@@ -258,39 +267,14 @@ const s4Review = (project: Project): ReviewItem[] => {
       level: 'ok',
       step: 5,
     },
-    {
-      id: 'brand-lockup',
-      label: 'ClutchVaultの表示',
-      detail: overlap ?? 'CVアイコンとサービス名はCTAの中にあり、独立したロゴは重ねません',
-      level: overlap ? 'warn' : 'ok',
-      step: overlap ? 5 : undefined,
-    },
   ];
 };
 
 const s7Review = (project: Project): ReviewItem[] => {
-  if (project.templateId !== 't-std') {
-    return [
-      {
-        id: 'cta-duplicate',
-        label: 'S7のCTA',
-        detail: 'ガイド動画には S7 がありません',
-        level: 'ok',
-      },
-      {
-        id: 'brand-lockup',
-        label: 'ClutchVaultの表示',
-        detail: 'ガイド動画には S7 がありません',
-        level: 'ok',
-      },
-    ];
-  }
   if (resolveCtaDesign(project) === 's4-block') return s4Review(project);
   const cta = project.captions.find((caption) => caption.id === 'cta');
   const shown = Boolean(cta && !cta.hidden && (cta.text.ja.trim() || cta.text.en.trim()));
   const duplicate = s7CtaDuplicate(project);
-  const lines = shown ? Math.max(s7CtaLineCount(cta?.text.ja ?? ''), s7CtaLineCount(cta?.text.en ?? '')) : 0;
-  const overlap = s7BrandOverlapDetail(lines);
   return [
     {
       id: 'cta-duplicate',
@@ -299,16 +283,9 @@ const s7Review = (project: Project): ReviewItem[] => {
         ? '同じCTA文言がS7に2か所あります'
         : shown
           ? '主CTAは1か所だけです'
-          : 'CTA文言は出ていません。Brand Lockupは表示します',
+          : 'CTA文言は出ていません',
       level: duplicate ? 'error' : 'ok',
       step: duplicate ? 5 : undefined,
-    },
-    {
-      id: 'brand-lockup',
-      label: 'ClutchVaultの表示',
-      detail: overlap ?? 'CTAの下に Clutch Vault のタイトルを固定表示します',
-      level: overlap ? 'warn' : 'ok',
-      step: overlap ? 5 : undefined,
     },
   ];
 };
@@ -322,14 +299,6 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
   const englishGaps = captionIds.filter((id) => {
     const caption = captionById(project, id);
     return caption ? captionMetrics(caption.text.en, project, 'en', id).empty : true;
-  });
-  const overflow = captionIds.some((id) => {
-    const caption = captionById(project, id);
-    if (!caption) return false;
-    return (
-      captionMetrics(caption.text.ja, project, 'ja', id).overflow ||
-      captionMetrics(caption.text.en, project, 'en', id).overflow
-    );
   });
   const track = tracks.find((item) => item.id === project.audio.bgm?.audioTrackId) ?? null;
   let license: ReviewItem;
@@ -399,9 +368,7 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
       label: 'すべてのシーンに素材がある',
       detail:
         missingScenes.length === 0
-          ? project.templateId === 't-guide'
-            ? 'G1・G2・G4（G3 は自動）'
-            : `構成 ${sceneOrderLabel(configuredSceneOrder(project))} · 必須素材を設定済み`
+          ? `構成 ${sceneOrderLabel(configuredSceneOrder(project))} · 必須素材を設定済み`
           : `未設定: ${missingScenes.map((sceneKey) => SCENE_BAND[sceneKey]).join('・')}`,
       level: missingScenes.length === 0 ? 'ok' : 'error',
       step: missingScenes.length === 0 ? undefined : 3,
@@ -429,6 +396,35 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
         step: overlap ? 4 : undefined,
       } as const;
     })(),
+    (() => {
+      const notes = project.scenes.flatMap((scene) => {
+        if (scene.layout916 !== 'focus') return [];
+        const clip = project.clips.find((item) => item.id === scene.clipId);
+        const asset = project.assets.find((item) => item.id === clip?.assetId);
+        const frame = focusFrameOf(asset?.meta.width, asset?.meta.height);
+        const arrow = activeTimeline(project).items.find((item) => item.sceneKey === scene.sceneKey)?.arrow ?? null;
+        const detail = focusOutsideDetail(
+          frame,
+          scene.cropCenterX,
+          sceneFocusEffects(scene, arrow),
+          scene.cropZoom,
+          scene.cropCenterY,
+        );
+        return detail ? [`${SCENE_BAND[scene.sceneKey]}: ${detail}`] : [];
+      });
+      return {
+        id: 'focus-crop',
+        label: 'フォーカスの切り抜き',
+        detail:
+          notes.length > 0
+            ? notes.join(' ')
+            : project.scenes.some((scene) => scene.layout916 === 'focus')
+              ? '切り抜く範囲の外に出ている演出はありません'
+              : 'フォーカスのシーンはありません',
+        level: notes.length > 0 ? 'warn' : 'ok',
+        step: notes.length > 0 ? 3 : undefined,
+      } as const;
+    })(),
     {
       id: 'english',
       label: '英語のテロップ',
@@ -442,15 +438,6 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
             : `${englishGaps.map((id) => captionName[id]).join('・')} が空です`,
       level: englishGaps.length === 0 ? 'ok' : 'warn',
       step: englishGaps.length === 0 ? undefined : aimCopyMissing ? 1 : 5,
-    },
-    {
-      id: 'overflow',
-      label: 'テロップのはみ出し',
-      detail: overflow
-        ? `フックは3行、それ以外は2行まで。または日本語15文字・英語${project.englishCaptionPreset === 'en-concise' ? 4 : 5}語を超えています`
-        : 'セーフゾーンの外に文字はありません',
-      level: overflow ? 'warn' : 'ok',
-      step: overflow ? 5 : undefined,
     },
     ...s7Review(project),
     license,
@@ -471,17 +458,32 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
         step: iconWarning ? 1 : undefined,
       } as const;
     })(),
-    {
-      id: 'korean-title',
-      label: '韓国語のタイトル',
-      detail: koreanTitleUsesEnglishHook(project)
-        ? '韓国語のタイトルが英語のままです（YouTube の翻訳欄）'
-        : project.guide.exportPresets.includes('yt-global')
-          ? '韓国語のタイトルを確認済み'
-          : 'YouTube（英語）がオフのため不要',
-      level: koreanTitleUsesEnglishHook(project) ? 'warn' : 'ok',
-      step: koreanTitleUsesEnglishHook(project) ? 8 : undefined,
-    },
+    ...(['ja', 'en'] as const).flatMap((language) => {
+      if (!focusHookWarning(project, language)) return [];
+      const name = language === 'ja' ? '日本語' : 'English';
+      return [
+        {
+          id: `thumbnail-hook-${language}`,
+          label: 'サムネイルのフック',
+          detail: `${name}のフックが3行に収まりません。最小サイズでもはみ出します`,
+          level: 'warn' as const,
+          step: 5 as const,
+        },
+      ];
+    }),
+    ...(() => {
+      const upscale = focusUpscale(project);
+      if (upscale === null || upscale <= THUMB_FOCUS.zoom.warnUpscale) return [];
+      return [
+        {
+          id: 'thumbnail-upscale',
+          label: 'サムネイルの拡大',
+          detail: `映像を${upscale.toFixed(2)}倍に拡大しています。1.60倍を超えるとぼやけます`,
+          level: 'warn' as const,
+          step: 4 as const,
+        },
+      ];
+    })(),
     {
       id: 'experiment',
       label: 'この動画の実験',
@@ -494,7 +496,7 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
       id: 'timeline',
       label: '詳細編集での変更',
       detail: project.timelineEdited
-        ? 'タイムラインを変更しています。手順の変更の一部は反映されません'
+        ? 'タイムラインを手編集しています。尺・切り抜きは手順と連動します'
         : 'タイムラインは未編集（手順の変更がそのまま反映されます）',
       level: 'info',
     },
@@ -527,7 +529,7 @@ const stepComplete = (project: Project, step: GuideStepId, tracks: AudioTrack[])
   if (step === 9) {
     return project.guide.lastExport?.contentStamp === exportContentStamp(project);
   }
-  if (project.guide.exportPresets.length === 0) return false;
+  if (publishingPresets(project).length === 0) return false;
   return project.status === 'posted';
 };
 
@@ -548,7 +550,6 @@ const stepWarning = (project: Project, step: GuideStepId, tracks: AudioTrack[]):
   if (step === 1) {
     return !project.lineup.standDescription.en.trim() || !project.lineup.aimDescription.en.trim();
   }
-  if (step === 3) return !durationInBand(project);
   if (step === 5) {
     return reviewCaptionIds(project).some((id) => {
       const caption = captionById(project, id);
@@ -560,6 +561,35 @@ const stepWarning = (project: Project, step: GuideStepId, tracks: AudioTrack[]):
   }
   if (step === 7) return reviewItems(project, tracks).some((item) => item.level === 'warn');
   return false;
+};
+
+const orderDeliveryPresets = (presets: DeliveryPresetId[]): DeliveryPresetId[] => {
+  const selected = new Set(presets);
+  const ordered: DeliveryPresetId[] = [];
+  for (const platform of ['youtube', 'tiktok', 'x'] as const) {
+    for (const id of DELIVERY_PRESET_ORDER) {
+      if (selected.has(id) && DELIVERY_PRESETS[id].platform === platform) ordered.push(id);
+    }
+  }
+  return ordered;
+};
+
+/**
+ * 投稿運用の対象。
+ * 直近の書き出しに記録されたプリセットを優先する。
+ * サムネイルだけの再書き出しで記録が空になっても、書き出しファイルのリンクから戻す。
+ */
+export const publishingPresets = (project: Project): DeliveryPresetId[] => {
+  if (!project.guide.lastExport) return [];
+  const exported = orderDeliveryPresets(project.guide.lastExport.presets);
+  if (exported.length > 0) return exported;
+  const selected = orderDeliveryPresets(project.guide.exportPresets);
+  if (selected.length > 0) return selected;
+  return orderDeliveryPresets(
+    (Object.entries(project.publishing.links) as Array<[string, string | undefined]>).flatMap(([id, url]) =>
+      id in DELIVERY_PRESETS && url?.trim() ? [id as DeliveryPresetId] : [],
+    ),
+  );
 };
 
 export const stepSummary = (project: Project, step: GuideStepId): string => {
@@ -577,10 +607,13 @@ export const stepSummary = (project: Project, step: GuideStepId): string => {
     if (!zoom?.enabled) return `${layout} · ズームなし`;
     return `${layout} · ズーム ×${zoom.zoom}`;
   }
-  if (step === 5) return project.hookPattern === 'custom' ? '自由入力' : project.hookPattern;
+  if (step === 5) {
+    const line = project.captions.find((caption) => caption.id === 'hook')?.text.ja.split('\n')[0]?.trim() ?? '';
+    return line || 'フック未入力';
+  }
   if (step === 6) return project.audio.bgm ? 'BGMあり' : 'BGMなし';
   if (step === 8) return project.publishing.title.ja.trim() || '投稿文';
-  if (step === 9) return project.guide.exportPresets.join('・') || 'プリセットなし';
+  if (step === 9) return publishingPresets(project).join('・') || project.guide.exportPresets.join('・') || 'プリセットなし';
   if (step === 10) return project.status === 'posted' ? '投稿済み' : '投稿・運用';
   return '';
 };
@@ -615,9 +648,7 @@ export const guideSteps = (
       id,
       name: step.name,
       hint:
-        id === 3 && project.templateId !== 't-guide'
-          ? `動画構成 ${sceneOrderLabel(configuredSceneOrder(project))}`
-          : step.hint,
+        id === 3 ? `動画構成 ${sceneOrderLabel(configuredSceneOrder(project))}` : step.hint,
       status,
       summary: done ? stepSummary(project, id) : '',
       blocker,
@@ -648,7 +679,7 @@ export const nextGuideAction = (
     const started = project.posts.some((post) => post.url.trim());
     return { step: 10, label: started ? '投稿・運用を続ける' : '投稿・運用を始める' };
   }
-  return { step: pending.id, label: `続きから（${pending.id} ${pending.name}）` };
+  return { step: pending.id, label: `続きから（${guideStepNumber(pending.id)} ${pending.name}）` };
 };
 
 const sameXPost = (left: Project['publishing']['xPost'], right: Project['publishing']['xPost']): boolean =>
@@ -696,6 +727,7 @@ export const followPublishing = (project: Project): Project => {
     },
     links: project.publishing.links,
     memoUrl: project.publishing.memoUrl,
+    pinnedComment: project.publishing.pinnedComment,
     xPost,
   };
   if (
@@ -838,6 +870,17 @@ export const applyInheritance = (
   if (source.plannedPostDate) {
     next = { ...next, plannedPostDate: shiftPostDate(source.plannedPostDate) };
   }
+  if (items.includes('thumbnail')) {
+    const layout = source.thumbnail?.layout === 'focus' ? 'focus' : 'classic';
+    const zoom = source.thumbnail?.zoom;
+    next = {
+      ...next,
+      thumbnail: {
+        layout,
+        ...(zoom !== undefined ? { zoom } : {}),
+      },
+    };
+  }
   if (items.includes('experiment')) {
     next = {
       ...next,
@@ -919,12 +962,12 @@ export const desiredAssetForScene = (
 ): Project['assets'][number] | undefined => {
   const base = baseVideoOf(project);
   if (!base || sceneKey === 'card' || sceneKey === 'loop') return undefined;
-  if (sceneKey === 'demo' && project.templateId !== 't-guide') return undefined;
+  if (sceneKey === 'demo') return undefined;
   return base;
 };
 
 const syncOptionalDemoTimeline = (project: Project): Project => {
-  if (project.templateId === 't-guide' || !project.timeline) return project;
+  if (!project.timeline) return project;
   const sceneOrder = configuredSceneOrder(project);
   if (!sceneOrder.includes('demo')) {
     const timeline = removeSceneItems(project.timeline, 'demo');
@@ -1066,13 +1109,16 @@ export const removeVideoAsset = (project: Project, assetId: string): Project => 
     if (stillId && removedStillIds.has(stillId)) next.cardStills[role] = undefined;
   }
   if (next.thumbnailFrame?.assetId === assetId) next.thumbnailFrame = undefined;
+  if (next.thumbnail?.frame?.assetId === assetId && next.thumbnail) {
+    const { frame: _frame, ...rest } = next.thumbnail;
+    next.thumbnail = rest;
+  }
 
   return assignClipsFromRoles(next);
 };
 
 /** S6 を外す。実戦デモの役割も外し、切り抜きが定点本体だけのときはその範囲も消す。 */
 export const omitDemoScene = (project: Project): Project => {
-  if (project.templateId === 't-guide') return project;
   const next = structuredClone(project);
   const scene = next.scenes.find((item) => item.sceneKey === 'demo');
   if (scene?.clipId) {
@@ -1090,7 +1136,7 @@ export const omitDemoScene = (project: Project): Project => {
 
 /** 実戦デモがなければ定点本体から S6 の範囲を作る。 */
 export const includeDemoFromMain = (project: Project): Project => {
-  if (project.templateId === 't-guide' || sceneHasRange(project, 'demo')) return project;
+  if (sceneHasRange(project, 'demo')) return project;
   const next = structuredClone(project);
   const source = videosOf(next)[0];
   const scene = next.scenes.find((item) => item.sceneKey === 'demo');
@@ -1226,20 +1272,6 @@ export const compositionBlocks = (
   project: Project,
 ): Array<{ sceneKey: SceneKey; label: string; duration: number; auto: boolean }> => {
   const timeline = activeTimeline(project);
-  if (project.templateId === 't-guide') {
-    const labels: Record<string, string> = {
-      hook: 'G1',
-      stand: 'G2',
-      card: 'G3',
-      demo: 'G4',
-    };
-    return timeline.items.map((item) => ({
-      sceneKey: item.sceneKey,
-      label: labels[item.sceneKey] ?? item.sceneKey,
-      duration: item.duration,
-      auto: item.sceneKey === 'card',
-    }));
-  }
   const labels: Record<SceneKey, string> = {
     hook: 'S1',
     stand: 'S2',
@@ -1275,25 +1307,12 @@ export const sceneGuideCopy = (
   project: Project,
   sceneKey: SceneKey,
 ): { title: string; body: string; target: number; min: number; max: number } => {
-  if (project.templateId === 't-guide') {
-    const saved = project.templateParams.sceneDurations?.[sceneKey];
-    const fit = (copy: { title: string; body: string; target: number; min: number; max: number }) => {
-      const target = typeof saved === 'number' ? saved : copy.target;
-      return { ...copy, target, min: Math.min(copy.min, target), max: Math.max(copy.max, target) };
-    };
-    if (sceneKey === 'hook') {
-      return fit({ title: 'G1 タイトル', body: '着弾やキルを、タイトルカードの背景にします', target: 2.5, min: 1.5, max: 4 });
-    }
-    if (sceneKey === 'stand') {
-      return fit({ title: 'G2 手順', body: '立ち位置から発動までを1本の手順映像にします', target: 9.5, min: 6, max: 14 });
-    }
-    return fit({ title: 'G4 デモ', body: '実戦でこの定点を使った場面です', target: 10, min: 6, max: 14 });
-  }
   const table: Partial<Record<SceneKey, { title: string; body: string; target: number; min: number; max: number }>> = {
     hook: { title: 'S1 フック', body: '着弾・キルの瞬間', target: 4, min: 1.5, max: 5 },
     stand: { title: 'S2 立ち位置', body: '立ち位置と周りの目印', target: 3, min: 2, max: 4 },
     aim: { title: 'S3 狙い', body: '照準を合わせてから投げる直前まで', target: 4, min: 3, max: 5 },
     throw: { title: 'S4 発動', body: '投げてから着弾・発動まで', target: 3, min: 2, max: 4 },
+    card: { title: 'S5 カード', body: '完成カードを全画面表示。秒数だけ変えられます', target: 2.5, min: 1, max: 5 },
     demo: { title: 'S6 デモ', body: '実戦でこの定点を使った場面。なくても進めます', target: 11.5, min: 6, max: 12 },
     loop: { title: 'S7 ループ', body: 'S1 の開始直前。終了は S1 の in より 0.01 秒前。別テイクにもできます', target: 2, min: 1.5, max: 3 },
   };
@@ -1379,13 +1398,13 @@ export const HOOK_PATTERN_LABELS: Record<HookPattern, string> = {
 };
 
 export const GAME_VOLUME_DEFAULTS: Record<SceneKey, number> = {
-  hook: 0.15,
-  stand: 0.15,
-  aim: 0.15,
-  throw: 0.15,
-  card: 0.15,
-  demo: 0.15,
-  loop: 0.15,
+  hook: 0.1,
+  stand: 0.1,
+  aim: 0.1,
+  throw: 0.1,
+  card: 0.1,
+  demo: 0.1,
+  loop: 0.1,
 };
 
 export const applyDefaultVolumes = (project: Project, game: boolean, bgm: boolean): Project => {

@@ -66,7 +66,6 @@ export const refreshLegacyCta = <T extends { captions: Project['captions'] }>(
 });
 
 export const s7CtaDuplicate = (project: Project): boolean => {
-  if (project.templateId !== 't-std') return false;
   const cta = project.captions.find((caption) => caption.id === 'cta');
   if (!cta || cta.hidden) return false;
   return (['ja', 'en'] as const).some((language) => {

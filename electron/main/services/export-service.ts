@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
@@ -16,14 +17,18 @@ import type {
   ExportResult,
 } from '../../../shared/ipc';
 import { aimZoomMetadata } from '../../../shared/aim-zoom';
+import { thumbnailExportMeta } from '../../../shared/thumbnail-focus';
 import {
   DELIVERY_PRESETS,
+  formatExportBasename,
   platformsFor,
   trackingMetaFromUrl,
   type DeliveryPresetId,
 } from '../../../shared/delivery-presets';
 import { captionLanguagesFor, copyForJob, jobsForPresets } from '../../../shared/export-copy';
 import { videoCtaRenders } from '../../../shared/s4-cta';
+import type { PublishedExportRecord } from '../../../shared/published-snapshot';
+import type { PublishedSnapshot } from '../../../shared/schema/published';
 import { parseProject, type Project } from '../../../shared/schema/project';
 import { activeTimeline } from '../../../shared/timeline';
 import type { AudioTrack } from '../../../shared/schema/audio';
@@ -66,12 +71,14 @@ const getFfmpegPath = (): string => {
 
 export class ExportService {
   private serveUrl: string | null = null;
+  private bundleStamp: string | null = null;
   private running = false;
   private exportStartedAt = 0;
 
   constructor(
     private readonly getWorkspace: () => string | null,
     private readonly libraryService: LibraryService,
+    private readonly onPublished?: (record: PublishedExportRecord) => PublishedSnapshot,
   ) {}
 
   async export(request: ExportRequest, sender: WebContents): Promise<ExportResult> {
@@ -331,6 +338,17 @@ export class ExportService {
           }
         }
         const exportedAt = new Date().toISOString();
+        const exportId = randomUUID();
+        const published = job.video
+          ? this.onPublished?.({
+              exportId,
+              project: prepared.videoProject,
+              basename,
+              renderedDurationSec: videoDurationSec,
+              language,
+              frozenAt: exportedAt,
+            })
+          : undefined;
         await fs.writeFile(
           metadataPath,
           JSON.stringify(
@@ -338,6 +356,7 @@ export class ExportService {
               app: 'CV Creator Studio',
               appVersion: app.getVersion(),
               exportedAt,
+              exportId,
               projectId: project.id,
               variantId: basename.match(/_v(\d+)$/)?.[1] ?? '1',
               lang: language,
@@ -353,12 +372,17 @@ export class ExportService {
                     ? 'ja-a'
                     : 'en-c',
               hookPattern: project.hookPattern,
+              thumbnail: thumbnailExportMeta(project, language),
               aimZoom: aimZoomMetadata(project),
               annotationStyle: project.annotationStyle ?? 'standard',
               experiment: project.experiment,
               hookText: project.captions.find((caption) => caption.id === 'hook')?.text[
                 language
               ],
+              scenes: project.scenes.map((scene) => ({
+                sceneKey: scene.sceneKey,
+                layout916: scene.layout916,
+              })),
               lineup: {
                 map: project.lineup.map,
                 site: project.lineup.site,
@@ -367,6 +391,8 @@ export class ExportService {
                 ability: project.lineup.ability,
               },
               durationSec: videoDurationSec,
+              publishedScenes: published?.scenes ?? [],
+              publishedSource: published?.source,
               withBgm: job.video && Boolean(audioTrack),
               audio:
                 job.video && audioTrack
@@ -515,8 +541,33 @@ export class ExportService {
     return paths;
   }
 
+  private async hashTree(dir: string, hash: ReturnType<typeof createHash>): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await this.hashTree(full, hash);
+        continue;
+      }
+      const info = await fs.stat(full);
+      hash.update(`${full}\0${info.mtimeMs}\0${info.size}\n`);
+    }
+  }
+
+  private async remotionSourceStamp(): Promise<string> {
+    if (app.isPackaged) return 'packaged';
+    const hash = createHash('sha1');
+    const root = app.getAppPath();
+    await this.hashTree(path.join(root, 'remotion'), hash);
+    await this.hashTree(path.join(root, 'shared'), hash);
+    return hash.digest('hex');
+  }
+
   private async getBundle(): Promise<string> {
-    if (this.serveUrl) return this.serveUrl;
+    const stamp = await this.remotionSourceStamp();
+    if (this.serveUrl && this.bundleStamp === stamp) return this.serveUrl;
     const entryPoint = app.isPackaged
       ? path.join(process.resourcesPath, 'remotion', 'index.ts')
       : path.join(app.getAppPath(), 'remotion', 'index.ts');
@@ -524,6 +575,7 @@ export class ExportService {
       entryPoint,
       webpackOverride: (config) => config,
     });
+    this.bundleStamp = stamp;
     return this.serveUrl;
   }
 
@@ -533,7 +585,7 @@ export class ExportService {
     languages: Array<'ja' | 'en'>,
   ): void {
     if (requireClips) {
-      const required = project.templateId === 't-guide' ? ['hook', 'demo'] : ['hook', 'stand', 'aim', 'throw'];
+      const required = ['hook', 'stand', 'aim', 'throw'];
       const missing = required.filter((sceneKey) => {
         const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
         return !scene?.clipId || !project.clips.some((clip) => clip.id === scene.clipId);
@@ -555,7 +607,7 @@ export class ExportService {
       }
       for (const caption of project.captions) {
         if (caption.id === 'cta' || caption.styleId === 'cta') continue;
-        if (caption.id === 'demo' && project.templateId !== 't-guide') {
+        if (caption.id === 'demo') {
           const demo = project.scenes.find((scene) => scene.sceneKey === 'demo');
           const included = Boolean(demo?.clipId && project.clips.some((clip) => clip.id === demo.clipId));
           if (!included) continue;
@@ -663,10 +715,15 @@ export class ExportService {
     project: ReturnType<typeof parseProject>,
     slot: 'ja' | 'en' | 'x',
   ): Promise<string> {
-    const date = (project.plannedPostDate ?? new Date().toISOString()).slice(0, 10).replaceAll('-', '');
-    const base = `${date}_${project.lineup.map}_${project.lineup.agent}_std_${slot}`;
     for (let variant = 1; variant < 1000; variant += 1) {
-      const candidate = `${base}_v${variant}`;
+      const candidate = formatExportBasename({
+        plannedPostDate: project.plannedPostDate,
+        map: project.lineup.map,
+        site: project.lineup.site,
+        agent: project.lineup.agent,
+        slot,
+        variant,
+      });
       const taken = await this.variantTaken(outputDirectory, candidate);
       if (!taken) return candidate;
     }

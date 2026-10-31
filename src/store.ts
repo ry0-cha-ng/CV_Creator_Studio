@@ -36,7 +36,8 @@ type StudioState = {
 
 const persistenceErrorPrefix = '保存結果に編集が反映されていません';
 
-export const useStudioStore = create<StudioState>((set, get) => ({
+const createStudioStore = () =>
+  create<StudioState>((set, get) => ({
   workspace: null,
   projects: [],
   project: null,
@@ -96,3 +97,12 @@ export const useStudioStore = create<StudioState>((set, get) => ({
     return 'saved';
   },
 }));
+
+const storeKey = '__cvCreatorStudioStore';
+const storeHolder = globalThis as typeof globalThis & {
+  [storeKey]?: ReturnType<typeof createStudioStore>;
+};
+/** ホットリロードでモジュールが再評価されても、開いているプロジェクトを別の空ストアへ取り違えない。 */
+const studioStore = storeHolder[storeKey] ?? createStudioStore();
+storeHolder[storeKey] = studioStore;
+export const useStudioStore = studioStore;

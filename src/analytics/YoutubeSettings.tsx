@@ -111,13 +111,16 @@ export const YoutubeSettings = () => {
     <>
       <strong>YouTube 連携</strong>
       {status.phase === 'unconfigured' && (
-        <p className="an-muted">Google Cloud で作った OAuth クライアント（種類：デスクトップアプリ）の ID を入れてください。読み取りだけを許可します。</p>
+        <p className="an-muted">Google Cloud で作った OAuth クライアント（種類：デスクトップアプリ）の ID を入れてください。分析は読み取り、投稿は別途「投稿を有効にする」で許可します。</p>
       )}
       {status.phase === 'disconnected' && <p className="an-muted">未接続です。</p>}
       {status.phase === 'reauth-required' && <p className="ai-error">Googleの許可が切れています。もう一度ログインしてください。</p>}
       {status.phase === 'connected' && (
         <p className="an-muted">
-          接続中：{status.channel ? `${status.channel.title}${status.channel.handle ? `（${status.channel.handle}）` : ''}` : '初回の同期でチャンネルを確認します'}
+          接続中：{status.channel ? `${status.channel.title}${status.channel.handle ? `（${status.channel.handle}）` : ''}` : 'チャンネルを確認してください'}
+          {' · '}
+          {status.capabilities?.publish ? '投稿可' : '読み取りのみ'}
+          {status.capabilities?.analytics ? ' · 分析可' : ''}
         </p>
       )}
       {!status.secureStorage && <p className="ai-error">このPCでは認証情報を暗号化して保存できないため、接続できません。</p>}
@@ -184,15 +187,34 @@ export const YoutubeSettings = () => {
                 今すぐ同期
               </button>
             )}
+            {!status.capabilities?.publish && (
+              <button
+                type="button"
+                className="an-secondary yt-button"
+                disabled={busy !== null || !status.secureStorage}
+                onClick={() => void run('login', () => window.studio.connectYoutube('publish'))}
+              >
+                {busy === 'login' ? 'ブラウザで許可してください…' : '投稿を有効にする'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="an-text-btn"
+              disabled={busy !== null}
+              onClick={() => void run('disconnect', () => window.studio.disconnectYoutubeLocal())}
+            >
+              このPCの接続を解除
+            </button>
             <button
               type="button"
               className="an-text-btn"
               disabled={busy !== null}
               onClick={() => void run('disconnect', () => window.studio.disconnectYoutube())}
             >
-              接続を解除
+              Googleの許可も取り消す
             </button>
           </div>
+          <p className="an-muted">このPCの接続を解除しても、YouTube上の予約と動画は残ります。Googleの許可を取り消すと分析連携も切れます。</p>
           {progress && (
             <div className="yt-progress">
               <span>

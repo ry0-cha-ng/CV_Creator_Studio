@@ -73,6 +73,7 @@ export const primaryVariableSchema = z.enum([
   'postTime',
   'agent',
   'ability',
+  'thumbnail',
 ]);
 export type PrimaryVariable = z.infer<typeof primaryVariableSchema>;
 
@@ -128,7 +129,7 @@ export const decisionConclusionSchema = z.enum([
 
 export const insightStatusSchema = z.enum(['adopted', 'testing', 'rejected']);
 export type InsightStatus = z.infer<typeof insightStatusSchema>;
-export const insightBasisSchema = z.enum(['experiment', 'decision', 'policy']);
+export const insightBasisSchema = z.enum(['experiment', 'decision', 'policy', 'external_observation']);
 
 const optionalNumber = z.number().finite().optional();
 
@@ -146,6 +147,7 @@ export const postContentSchema = z.object({
   openingType: openingTypeSchema.optional(),
   structureType: structureTypeSchema.optional(),
   ctaType: ctaTypeSchema.optional(),
+  thumbnailLayout: z.enum(['classic', 'focus']).optional(),
   ctaCopy: z.string().optional(),
   ctaMotion: z.boolean().optional(),
   durationSec: optionalNumber,
@@ -170,6 +172,23 @@ export const analyticsPostSchema = z.object({
   youtubeVideoId: z.string().optional(),
   channelId: z.string().optional(),
   apiPublishedAt: z.string().optional(),
+  publicationState: z.enum(['not_uploaded', 'private', 'unlisted', 'scheduled', 'public', 'unknown', 'unavailable']).optional(),
+  scheduledPublishAt: z.string().optional(),
+  timezone: z.string().optional(),
+  uploadedAt: z.string().optional(),
+  firstObservedPublicAt: z.string().optional(),
+  actualPublishedAt: z.string().optional(),
+  publishedAtSource: z.enum(['api-public', 'manual', 'first-observed']).optional(),
+  publicationConfirmedAt: z.string().optional(),
+  everPublished: z.boolean().optional(),
+  exportRef: z
+    .object({
+      exportId: z.string(),
+      basename: z.string().optional(),
+      sha256: z.string().optional(),
+      frozenAt: z.string(),
+    })
+    .optional(),
   contentType: youtubeContentTypeSchema.optional(),
   contentTypeSource: contentTypeSourceSchema.optional(),
   basename: z.string().optional(),
@@ -179,6 +198,7 @@ export const analyticsPostSchema = z.object({
   openingType: openingTypeSchema.optional(),
   structureType: structureTypeSchema.optional(),
   ctaType: ctaTypeSchema.optional(),
+  thumbnailLayout: z.enum(['classic', 'focus']).optional(),
   experimentId: z.string().optional(),
   experimentArm: experimentArmSchema.optional(),
   durationSec: optionalNumber,
@@ -240,6 +260,9 @@ export const experimentSchemaV7 = z.object({
   startedAt: z.string().optional(),
   endedAt: z.string().optional(),
   linkedPostIds: z.array(z.string()).default([]),
+  /** 比較から接続したときの集計窓。7日時点の記録とは別。 */
+  comparisonWindow: z.enum(['publish-calendar-7d', 'publish-calendar-28d']).optional(),
+  comparisonNote: z.string().optional(),
   confounders: z.array(z.string()).default([]),
   status: experimentStatusSchema,
   conclusion: experimentConclusionSchema.optional(),
@@ -247,6 +270,9 @@ export const experimentSchemaV7 = z.object({
   nextAction: z.string().optional(),
   nextActionApplyCount: z.number().int().optional(),
   sourceProjectId: z.string().optional(),
+  /** 競合観察のメモID。自分の投稿IDとは別。 */
+  externalObservationIds: z.array(z.string()).default([]),
+  sourceNoteId: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -316,6 +342,7 @@ export const insightSchema = z.object({
   basis: insightBasisSchema.default('decision'),
   linkedExperimentIds: z.array(z.string()).default([]),
   linkedDecisionIds: z.array(z.string()).default([]),
+  linkedObservationIds: z.array(z.string()).default([]),
   applyAsDefault: z.boolean().default(false),
   suggestNext: z.boolean().default(false),
   warnOnUse: z.boolean().default(false),

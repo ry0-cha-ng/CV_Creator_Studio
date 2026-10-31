@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { PlayerRef } from '@remotion/player';
 import {
   compositionBlocks,
-  durationGoalLabel,
-  durationInBand,
   guideHeadline,
+  guideStepAfter,
+  guideStepBefore,
+  guideStepNumber,
   guideSteps,
   reviewItems,
   sceneHasRange,
@@ -42,13 +43,6 @@ const BLOCK_TITLE: Record<SceneKey, string> = {
   card: 'S5 カード',
   demo: 'S6 デモ',
   loop: 'S7 ループ',
-};
-
-const GUIDE_TITLE: Partial<Record<SceneKey, string>> = {
-  hook: 'G1 タイトル',
-  stand: 'G2 手順',
-  card: 'G3 カード',
-  demo: 'G4 デモ',
 };
 
 const isTypingTarget = (target: EventTarget | null): boolean => {
@@ -105,7 +99,6 @@ export const GuideShell = ({
   const steps = guideSteps(project, step, store.audioTracks);
   const blocks = compositionBlocks(project);
   const total = activeTimeline(project).durationSec;
-  const bandOk = durationInBand(project);
   const current = steps.find((item) => item.id === step);
 
   useEffect(() => {
@@ -114,13 +107,12 @@ export const GuideShell = ({
 
   useEffect(() => {
     if (step !== 3) return;
-    const scenes = trimScenes(project).filter((key) => key !== 'card');
+    const scenes = trimScenes(project);
     if (!scenes.some((key) => key === sceneKey) && scenes[0]) onSceneKey(scenes[0]);
   }, [
     step,
     sceneKey,
     project.id,
-    project.templateId,
     project.templateParams.sceneOrder,
     onSceneKey,
   ]);
@@ -155,10 +147,12 @@ export const GuideShell = ({
       if (isTypingTarget(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowRight') {
         event.preventDefault();
-        if (step < 10) go((step + 1) as GuideStepId);
+        const forward = guideStepAfter(step);
+        if (forward) go(forward);
       } else if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowLeft') {
         event.preventDefault();
-        if (step > 1) go((step - 1) as GuideStepId);
+        const back = guideStepBefore(step);
+        if (back) go(back);
       } else if (event.code === 'Space') {
         event.preventDefault();
         const player = playerRef.current;
@@ -168,6 +162,16 @@ export const GuideShell = ({
           stopBgmPreview();
           void player.play();
         }
+      } else if (
+        step === 3 &&
+        handlesRef.current?.nudgeCrop &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')
+      ) {
+        event.preventDefault();
+        const stepSize = event.shiftKey ? 0.05 : 0.01;
+        const axis = event.key === 'ArrowUp' || event.key === 'ArrowDown' ? 'y' : 'x';
+        const sign = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+        handlesRef.current.nudgeCrop(axis, sign * stepSize);
       } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
         const player = playerRef.current;
@@ -198,18 +202,18 @@ export const GuideShell = ({
     return () => player.removeEventListener('play', onPlay);
   }, [step, playerRef]);
 
-  const nextStep = steps.find((item) => item.id > step);
-  const previousStep = [...steps].reverse().find((item) => item.id < step);
+  const stepIndex = steps.findIndex((item) => item.id === step);
+  const nextStep = stepIndex >= 0 ? steps[stepIndex + 1] : undefined;
+  const previousStep = stepIndex > 0 ? steps[stepIndex - 1] : undefined;
   const decidedSec = blocks
     .filter((block) => !block.auto && sceneHasRange(project, block.sceneKey))
     .reduce((sum, block) => sum + block.duration, 0);
   const autoSec = blocks.filter((block) => block.auto).reduce((sum, block) => sum + block.duration, 0);
   const rangesReady = blocks.every((block) => block.auto || sceneHasRange(project, block.sceneKey));
   const sumLabel = rangesReady
-    ? `合計 ${total.toFixed(1)}s${bandOk ? ' ✓' : ''}`
+    ? `合計 ${total.toFixed(1)}s`
     : `決定 ${decidedSec.toFixed(1)}s + 自動 ${autoSec.toFixed(1)}s`;
-  const blockTitle = (scene: SceneKey): string =>
-    project.templateId === 't-guide' ? (GUIDE_TITLE[scene] ?? scene) : BLOCK_TITLE[scene];
+  const blockTitle = (scene: SceneKey): string => BLOCK_TITLE[scene];
 
   const reviewBlocked =
     step === 7 && reviewItems(project, store.audioTracks).some((item) => item.level === 'error');
@@ -262,7 +266,7 @@ export const GuideShell = ({
         {!(step === 10 && publishWide) && <nav className="gd-steps" aria-label="作成の手順">
           <div className="gd-steps-label">
             <span>作成の手順</span>
-            <span>{project.templateId === 't-guide' ? 'T-GUIDE ガイド型' : 'T-STD 定点ショート'}</span>
+            <span>T-STD 定点ショート</span>
           </div>
           <div className="gd-step-list">
             {steps.map((item) => (
@@ -273,7 +277,13 @@ export const GuideShell = ({
                 onClick={() => go(item.id)}
               >
                 <span className="gd-num">
-                  {item.id === step ? item.id : item.status === 'done' ? '✓' : item.status === 'warn' ? '!' : item.id}
+                  {item.id === step
+                    ? guideStepNumber(item.id)
+                    : item.status === 'done'
+                      ? '✓'
+                      : item.status === 'warn'
+                        ? '!'
+                        : guideStepNumber(item.id)}
                 </span>
                 <span className="gd-step-copy">
                   <strong>{item.name}</strong>
@@ -385,29 +395,25 @@ export const GuideShell = ({
       {step !== 10 && <footer className="gd-compose">
         <div className="gd-compose-total">
           <span className="gd-compose-kicker">構成</span>
-          <span className={rangesReady && bandOk ? 'gd-compose-sum' : 'gd-compose-sum is-warn'}>{sumLabel}</span>
-          <span className="gd-compose-goal">目標 {durationGoalLabel(project)}</span>
+          <span className={rangesReady ? 'gd-compose-sum' : 'gd-compose-sum is-warn'}>{sumLabel}</span>
         </div>
         <div className="gd-blocks">
           {blocks.map((block, index) => {
             const editing = step === 3 && sceneKey === block.sceneKey;
             const empty = !block.auto && !sceneHasRange(project, block.sceneKey);
             const detail =
-              block.sceneKey === 'card'
-                ? `自動 ${block.duration.toFixed(1)}s`
-                : block.auto && block.sceneKey === 'loop'
-                  ? defaultLoopRange(project) ? 'S1の直前' : 'S1と同じ'
-                  : block.auto && block.sceneKey === 'demo'
-                    ? `任意${editing ? ' · 編集中' : ''}`
-                    : empty
-                      ? '未設定'
-                      : `${block.duration.toFixed(1)}s${editing ? ' 編集中' : ''}`;
+              block.auto && block.sceneKey === 'loop'
+                ? defaultLoopRange(project) ? 'S1の直前' : 'S1と同じ'
+                : block.auto && block.sceneKey === 'demo'
+                  ? `任意${editing ? ' · 編集中' : ''}`
+                  : empty
+                    ? '未設定'
+                    : `${block.duration.toFixed(1)}s${editing ? ' 編集中' : ''}`;
             return (
               <button
                 key={`${block.sceneKey}-${index}`}
                 type="button"
                 style={{ flexGrow: Math.max(block.duration, 0.6) }}
-                disabled={block.sceneKey === 'card'}
                 className={[block.auto ? 'is-auto' : '', empty ? 'is-empty' : '', editing ? 'is-on' : '']
                   .filter(Boolean)
                   .join(' ')}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   METRIC_LABELS,
   VARIABLE_LABELS,
@@ -30,9 +30,23 @@ import type {
   PrimaryMetric,
   PrimaryVariable,
 } from '../../shared/schema/analytics';
+import type { CompetitorReference } from '../../shared/schema/competitor';
+import { HOOK_PATTERN_LABELS } from '../../shared/guide';
+import { WINDOW_LABELS } from '../../shared/youtube-analytics';
+import {
+  median,
+  pooledPerThousand,
+  retentionPoints,
+  spread,
+  type CompareWindow,
+  type YoutubeAnalysisRow,
+  type YoutubeExperimentLink,
+} from '../../shared/youtube-compare';
 import { AboutButton } from './chrome';
 import type { DetailTab } from './context';
 import { useAnalytics } from './context';
+import { CompetitorsTab } from './competitors';
+import { ALIGN_COLORS, AlignedRetention, PostDetail } from './PostDetail';
 
 const statusLabel = (status: string): string => {
   if (status === 'running') return '実施中';
@@ -52,27 +66,40 @@ export const DetailShell = ({
   tab: DetailTab;
   onTab: (tab: DetailTab) => void;
 }) => {
-  const screen = tab === 'overview' ? 'overview' : tab === 'posts' ? 'posts' : tab === 'experiments' ? 'experiments' : 'insights';
+  const screen = tab === 'overview' ? 'overview' : tab === 'posts' ? 'posts' : tab === 'experiments' ? 'experiments' : tab === 'insights' ? 'insights' : 'competitors';
+  const label = (item: DetailTab) =>
+    item === 'overview' ? 'Overview' : item === 'posts' ? 'Posts' : item === 'experiments' ? 'Experiments' : item === 'insights' ? 'Insights' : '競合';
   return (
     <div className="an-page">
       <div className="an-tabs">
-        {(['overview', 'posts', 'experiments', 'insights'] as const).map((item) => (
+        {(['overview', 'posts', 'experiments', 'insights', 'competitors'] as const).map((item) => (
           <button key={item} type="button" aria-pressed={tab === item} onClick={() => onTab(item)}>
-            {item === 'overview' ? 'Overview' : item === 'posts' ? 'Posts' : item === 'experiments' ? 'Experiments' : 'Insights'}
+            {label(item)}
           </button>
         ))}
         <span className="an-spacer" />
-        <AboutButton screen={screen} />
+        {tab !== 'competitors' && <AboutButton screen={screen} />}
         {(tab === 'overview' || tab === 'posts') && (
           <button type="button" className="an-ghost" onClick={() => void window.studio.exportAnalyticsCsv()}>
             CSV に書き出す
           </button>
+        )}
+        {tab === 'posts' && (
+          <>
+            <button type="button" className="an-ghost" onClick={() => void window.studio.exportYoutubeAnalysis('csv')}>
+              YouTube CSV
+            </button>
+            <button type="button" className="an-ghost" onClick={() => void window.studio.exportYoutubeAnalysis('json')}>
+              YouTube JSON
+            </button>
+          </>
         )}
       </div>
       {tab === 'overview' && <OverviewPanel />}
       {tab === 'posts' && <PostsPanel />}
       {tab === 'experiments' && <ExperimentsPanel />}
       {tab === 'insights' && <InsightsPanel />}
+      {tab === 'competitors' && <CompetitorsTab />}
     </div>
   );
 };
@@ -152,7 +179,6 @@ const OverviewPanel = () => {
           <select className="an-select" value={filters.templateId} onChange={(event) => setFilters({ ...filters, templateId: event.target.value })}>
             <option value="all">すべて</option>
             <option value="t-std">T-STD</option>
-            <option value="t-guide">T-GUIDE</option>
           </select>
         </label>
         <span className="an-muted">対象：投稿 {posts.length}件（7日の数字あり {with7.length}件）</span>
@@ -203,11 +229,29 @@ const reviewState = (bundle: ReturnType<typeof useAnalytics>['bundle'], post: An
   return statusLabel(task.status);
 };
 
+const metricOf = (row: YoutubeAnalysisRow | undefined, windowKind: CompareWindow, key: 'views' | 'engagedViews' | 'averageViewPercentage' | 'subscribersGained' | 'averageViewDuration'): number | undefined =>
+  row?.windows[windowKind].status === 'ok' ? row.windows[windowKind].metrics?.[key] : undefined;
+
 const PostsPanel = () => {
-  const { bundle, openExperimentNew } = useAnalytics();
+  const { bundle, openExperimentNew, openDetail, reload } = useAnalytics();
   const [filter, setFilter] = useState<'all' | 'missing' | 'open'>('all');
+  const [format, setFormat] = useState('all');
+  const [windowKind, setWindowKind] = useState<CompareWindow>('publish-calendar-7d');
   const [picked, setPicked] = useState<string[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [index, setIndex] = useState<YoutubeAnalysisRow[]>([]);
+  const [align, setAlign] = useState<Array<{ id: string; title: string; points: { ratio: number; sec: number; watch: number }[]; color: string }>>([]);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [targetExperiment, setTargetExperiment] = useState('');
+  useEffect(() => {
+    void window.studio.getYoutubeAnalysisIndex().then(setIndex).catch(() => setIndex([]));
+  }, [bundle]);
   if (!bundle) return null;
+  const byId = new Map(index.map((row) => [row.postId, row]));
+  const openPost = openId ? bundle.posts.find((post) => post.id === openId) : undefined;
+  if (openPost) {
+    return <PostDetailLoader post={openPost} experimentName={bundle.experiments.find((item) => item.id === openPost.experimentId)?.name} onBack={() => setOpenId(null)} />;
+  }
   const rows = bundle.posts.filter((post) => {
     const state = reviewState(bundle, post);
     if (filter === 'missing') return state === '7日の数字なし';
@@ -221,6 +265,28 @@ const PostsPanel = () => {
     missing: bundle.posts.filter((post) => reviewState(bundle, post) === '7日の数字なし').length,
     open: bundle.posts.filter((post) => ['振り返り待ち', '7日前'].includes(reviewState(bundle, post))).length,
   };
+  const visible = rows.filter((post) => {
+    if (format === 'all') return true;
+    return (byId.get(post.id)?.contentType ?? post.contentType ?? 'UNKNOWN') === format;
+  });
+  const completeRows = visible.flatMap((post) => {
+    const row = byId.get(post.id);
+    if (!row || row.windows[windowKind].status !== 'ok') return [];
+    return [{ post, row }];
+  });
+  const question = completeRows.filter((item) => item.post.hookPattern === 'question');
+  const otherHooks = completeRows.filter((item) => item.post.hookPattern !== 'question');
+  const earlyCard = completeRows.filter((item) => {
+    const start = item.row.cardStartSec;
+    const duration = item.post.durationSec ?? item.post.content.durationSec;
+    return start !== undefined && duration !== undefined && duration > 0 && start < duration / 2;
+  });
+  const lateCard = completeRows.filter((item) => {
+    const start = item.row.cardStartSec;
+    const duration = item.post.durationSec ?? item.post.content.durationSec;
+    return start !== undefined && duration !== undefined && duration > 0 && start >= duration / 2;
+  });
+  const noCard = completeRows.length - earlyCard.length - lateCard.length;
   return (
     <div className="an-scroll">
       <div className="an-chips">
@@ -228,20 +294,39 @@ const PostsPanel = () => {
         <button type="button" className="an-chip-btn" aria-pressed={filter === 'missing'} onClick={() => setFilter('missing')}>7日の数字なし {counts.missing}</button>
         <button type="button" className="an-chip-btn" aria-pressed={filter === 'open'} onClick={() => setFilter('open')}>振り返り未完了 {counts.open}</button>
       </div>
-      <p className="an-muted">2〜4件にチェックすると比べられます</p>
+      <div className="an-filters">
+        <label>比較期間
+          <select className="an-select" value={windowKind} onChange={(event) => setWindowKind(event.target.value as CompareWindow)}>
+            <option value="publish-calendar-7d">公開日を含む7日間</option>
+            <option value="publish-calendar-28d">公開日を含む28日間</option>
+          </select>
+        </label>
+        <label>形式
+          <select className="an-select" value={format} onChange={(event) => setFormat(event.target.value)}>
+            <option value="all">すべて</option>
+            <option value="SHORTS">ショート</option>
+            <option value="VIDEO_ON_DEMAND">横動画</option>
+            <option value="UNKNOWN">形式不明</option>
+          </select>
+        </label>
+        <span className="an-muted">集計途中は、確定の比較から外しています。公開日を含む7日間は、公開後ちょうど168時間ではありません。</span>
+      </div>
+      <p className="an-muted">タイトルで詳細を開きます。2〜4件にチェックすると、同じ期間で比べられます。</p>
       <div className="an-table-wrap">
         <table className="an-table">
           <thead>
             <tr>
-              {['選択', '投稿日', '媒体', '定点', 'フック', 'オープニング', '視聴（7日）', '再生率', 'App CTR', '保存', '振り返り'].map((head) => (
+              {['選択', '投稿日', 'タイトル', '媒体', '定点', 'フック', '再生', '平均視聴率', '登録者', '集計', '視聴（7日）', '振り返り'].map((head) => (
                 <th key={head}>{head}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((post) => {
+            {visible.map((post) => {
               const snapshot = latestSnapshot(bundle.snapshots, post.id);
+              const row = byId.get(post.id);
               const on = picked.includes(post.id);
+              const hook = (HOOK_PATTERN_LABELS as Record<string, string>)[post.hookPattern] ?? post.hookPattern;
               return (
                 <tr key={post.id}>
                   <td>
@@ -259,14 +344,19 @@ const PostsPanel = () => {
                     />
                   </td>
                   <td className="an-mono">{post.postedAt.slice(0, 10)}</td>
+                  <td>
+                    <button type="button" className="an-text-btn" onClick={() => setOpenId(post.id)}>
+                      {post.content.title || post.content.map || '無題'}
+                    </button>
+                  </td>
                   <td>{platformLabel(post.platform)}</td>
                   <td>{post.content.map}</td>
-                  <td>{post.hookPattern}</td>
-                  <td>{attributesOf(post).opening}</td>
+                  <td>{hook}</td>
+                  <td className="an-mono">{formatInt(metricOf(row, windowKind, 'views'))}</td>
+                  <td className="an-mono">{metricOf(row, windowKind, 'averageViewPercentage') === undefined ? '—' : `${metricOf(row, windowKind, 'averageViewPercentage')?.toFixed(1)}%`}</td>
+                  <td className="an-mono">{formatInt(metricOf(row, windowKind, 'subscribersGained'))}</td>
+                  <td>{row?.windows[windowKind].statusLabel ?? '—'}</td>
                   <td className="an-mono">{formatInt(snapshot?.views)}</td>
-                  <td className="an-mono">{formatPct(snapshot?.averagePercentageViewed ?? snapshot?.completionRate)}</td>
-                  <td className="an-mono">{formatRatioPct(appCtr(snapshot))}</td>
-                  <td className="an-mono">{formatInt(snapshot?.lineupSaves)}</td>
                   <td>{reviewState(bundle, post)}</td>
                 </tr>
               );
@@ -292,25 +382,251 @@ const PostsPanel = () => {
             );
           })}
           {diffs.length >= 2 && <p className="an-warn">差の原因は1つに決められません</p>}
+          <div className="an-table-wrap">
+            <table className="an-table">
+              <thead>
+                <tr>
+                  <th>動画</th><th>再生</th><th>平均視聴率</th><th>登録者</th><th>集計</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selected.map((post) => {
+                  const row = byId.get(post.id);
+                  return (
+                    <tr key={post.id}>
+                      <td>{post.content.title || post.content.map}</td>
+                      <td className="an-mono">{formatInt(metricOf(row, windowKind, 'views'))}</td>
+                      <td className="an-mono">{metricOf(row, windowKind, 'averageViewPercentage') === undefined ? '—' : `${metricOf(row, windowKind, 'averageViewPercentage')?.toFixed(1)}%`}</td>
+                      <td className="an-mono">{formatInt(metricOf(row, windowKind, 'subscribersGained'))}</td>
+                      <td>{row?.windows[windowKind].statusLabel ?? '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="an-muted">
+            確定している再生の中央値 {formatInt(median(selected.flatMap((post) => {
+              const value = metricOf(byId.get(post.id), windowKind, 'views');
+              return value === undefined ? [] : [value];
+            })))}。集計途中の動画はこの中央値に入っていません。差は原因の証明ではありません。
+          </p>
+          <button
+            type="button"
+            className="an-secondary"
+            onClick={() =>
+              void alignSelected(
+                selected.map((post) => ({ id: post.id, title: post.content.title || post.content.map || '無題' })),
+                windowKind,
+                setAlign,
+                setExcluded,
+              )
+            }
+          >
+            完成カードの開始で維持を揃える
+          </button>
+          {excluded.length > 0 && <p className="an-muted">除外：{excluded.join('、')}</p>}
+          {align.length > 0 && (
+            <>
+              <div className="an-row">
+                {align.map((item) => (
+                  <span key={item.id}><i style={{ color: item.color }}>●</i> {item.title}</span>
+                ))}
+              </div>
+              <AlignedRetention series={align} />
+              <p className="an-muted">0秒が完成カードの開始です。点と点のあいだは表示用の直線です。維持指標の差であり、離脱人数ではありません。</p>
+            </>
+          )}
           <button
             type="button"
             className="an-primary"
-            onClick={() => openExperimentNew(diffs.length === 1 ? diffs[0] : undefined)}
+            onClick={() =>
+              openExperimentNew(diffs.length === 1 ? diffs[0] : undefined, {
+                postIds: selected.map((post) => post.id),
+                windowKind,
+                titles: selected.map((post) => post.content.title || post.content.map || '無題'),
+              })
+            }
           >
             この{selected.length}件で実験を作る
           </button>
+          <div className="an-row">
+            <select className="an-select" value={targetExperiment} onChange={(event) => setTargetExperiment(event.target.value)} aria-label="接続する実験">
+              <option value="">既存の実験に接続</option>
+              {bundle.experiments.map((experiment) => (
+                <option key={experiment.id} value={experiment.id}>{experiment.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="an-secondary"
+              disabled={!targetExperiment}
+              onClick={() =>
+                void window.studio
+                  .linkAnalyticsPosts({
+                    experimentId: targetExperiment,
+                    postIds: selected.map((post) => post.id),
+                    windowKind,
+                  })
+                  .then(() => reload())
+                  .then(() => openDetail('experiments'))
+              }
+            >
+              接続する
+            </button>
+          </div>
+          <p className="an-muted">接続しても、各投稿の Control / Variant は変わりません。集計窓は実験に残ります。</p>
         </section>
       )}
+      <GroupCompare title="問いかけ型フック" leftLabel="問いかけ" rightLabel="その他" left={question} right={otherHooks} windowKind={windowKind} />
+      <GroupCompare title="完成カードの位置" leftLabel="前半" rightLabel="後半" left={earlyCard} right={lateCard} windowKind={windowKind} extra={noCard > 0 ? `完成カードの位置がない動画 ${noCard}本は外しています。` : undefined} />
     </div>
   );
 };
 
+const PostDetailLoader = ({
+  post,
+  experimentName,
+  onBack,
+}: {
+  post: AnalyticsPost;
+  experimentName?: string;
+  onBack: () => void;
+}) => {
+  const [view, setView] = useState<Awaited<ReturnType<typeof window.studio.getYoutubePostView>> | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    void window.studio
+      .getYoutubePostView(post.id)
+      .then((next) => {
+        setView(next);
+        setError('');
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '詳細を開けませんでした'));
+  }, [post.id]);
+  if (error) {
+    return (
+      <div className="an-scroll">
+        <button type="button" className="an-ghost" onClick={onBack}>← 一覧</button>
+        <p className="ai-error">{error}</p>
+      </div>
+    );
+  }
+  if (!view) return <p className="an-muted">読み込み中…</p>;
+  return <PostDetail post={post} view={view} experimentName={experimentName} onBack={onBack} onSaved={setView} />;
+};
+
+const alignSelected = async (
+  posts: Array<{ id: string; title: string }>,
+  windowKind: CompareWindow,
+  setAlign: (series: Array<{ id: string; title: string; points: { ratio: number; sec: number; watch: number }[]; color: string }>) => void,
+  setExcluded: (lines: string[]) => void,
+) => {
+  const views = await Promise.all(posts.map((post) => window.studio.getYoutubePostView(post.id)));
+  const excluded: string[] = [];
+  const series = views.flatMap((view, index) => {
+    const title = posts[index]?.title ?? view.postId;
+    const card = view.snapshot?.scenes.find((scene) => scene.meaning === 'card');
+    const duration = view.snapshot?.durationSec || view.publishedDurationSec || 0;
+    if (!card) {
+      excluded.push(`${title} は完成カードがありません`);
+      return [];
+    }
+    const points = retentionPoints(view.retention[windowKind], duration).map((point) => ({
+      ...point,
+      sec: point.sec - card.startSec,
+    }));
+    if (points.length === 0) {
+      excluded.push(`${title} はこの期間の維持がありません`);
+      return [];
+    }
+    return [{ id: view.postId, title, points, color: ALIGN_COLORS[index] ?? '#ffffff' }];
+  });
+  setExcluded(excluded);
+  setAlign(series);
+};
+
+const GroupCompare = ({
+  title,
+  leftLabel,
+  rightLabel,
+  left,
+  right,
+  windowKind,
+  extra,
+}: {
+  title: string;
+  leftLabel: string;
+  rightLabel: string;
+  left: Array<{ post: AnalyticsPost; row: YoutubeAnalysisRow }>;
+  right: Array<{ post: AnalyticsPost; row: YoutubeAnalysisRow }>;
+  windowKind: CompareWindow;
+  extra?: string;
+}) => {
+  const cell = (items: Array<{ post: AnalyticsPost; row: YoutubeAnalysisRow }>) => {
+    const views = items.flatMap((item) => {
+      const value = item.row.windows[windowKind].metrics?.views;
+      return value === undefined ? [] : [value];
+    });
+    const rates = items.flatMap((item) => {
+      const value = item.row.windows[windowKind].metrics?.averageViewPercentage;
+      return value === undefined ? [] : [value];
+    });
+    const gained = items.map((item) => item.row.windows[windowKind].metrics?.subscribersGained);
+    const engaged = items.map((item) => item.row.windows[windowKind].metrics?.engagedViews);
+    const pool =
+      gained.every((value) => value !== undefined) && engaged.every((value) => value !== undefined)
+        ? pooledPerThousand(
+            gained.reduce<number>((total, value) => total + (value ?? 0), 0),
+            engaged.reduce<number>((total, value) => total + (value ?? 0), 0),
+          )
+        : null;
+    const viewSpread = spread(views);
+    return { views, rates, pool, viewSpread };
+  };
+  const leftCell = cell(left);
+  const rightCell = cell(right);
+  const show = (value: number | null, digits = 0) => (value === null ? '—' : value.toLocaleString('ja-JP', { maximumFractionDigits: digits }));
+  return (
+    <section className="an-card an-task">
+      <strong>{title}</strong>
+      <p className="an-muted">確定した動画だけです。n&lt;3 は参考です。中央値の差を、原因が分かったこととしては扱いません。{extra}</p>
+      <div className="an-split">
+        {[{ label: leftLabel, items: left, stats: leftCell }, { label: rightLabel, items: right, stats: rightCell }].map((group) => (
+          <article key={group.label} className="an-card an-mini">
+            <span>{group.label}</span>
+            <b>n={group.items.length}</b>
+            <span>再生の中央値 {show(median(group.stats.views))}</span>
+            <span>平均視聴率の中央値 {show(median(group.stats.rates), 1)}%</span>
+            <span>
+              再生の幅 {group.stats.viewSpread ? `${show(group.stats.viewSpread.min)}–${show(group.stats.viewSpread.max)}` : '—'}
+            </span>
+            <span className="an-muted">
+              登録獲得効率（合計） {group.stats.pool === null ? '算出不可' : `${group.stats.pool.toFixed(2)} / 1,000エンゲージビュー`}
+            </span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+};
 const ExperimentsPanel = () => {
   const { bundle, reload, openExperimentNew } = useAnalytics();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [summary, setSummary] = useState('');
+  const [refs, setRefs] = useState<CompetitorReference[]>([]);
+  const selected = bundle?.experiments.find((item) => item.id === (selectedId ?? bundle.experiments[0]?.id));
+  useEffect(() => {
+    const ids = selected?.externalObservationIds ?? [];
+    if (ids.length === 0) {
+      setRefs([]);
+      return;
+    }
+    void window.studio.competitorReferenceState(ids).then((result) => {
+      if (result.ok) setRefs(result.data);
+    });
+  }, [selected?.id, selected?.externalObservationIds]);
   if (!bundle) return null;
-  const selected = bundle.experiments.find((item) => item.id === (selectedId ?? bundle.experiments[0]?.id));
   const running = bundle.experiments.some((item) => item.status === 'running');
   return (
     <div className="an-columns">
@@ -334,6 +650,24 @@ const ExperimentsPanel = () => {
           </div>
           <h1>{selected.name}</h1>
           <p>仮説：{selected.hypothesis}</p>
+          {selected.comparisonWindow && (
+            <p className="an-muted">比較期間：{WINDOW_LABELS[selected.comparisonWindow]}。7日時点の手入力とは別です。</p>
+          )}
+          {selected.linkedPostIds.length > 0 && (
+            <p className="an-muted">
+              比較から接続：
+              {selected.linkedPostIds
+                .map((id) => bundle.posts.find((post) => post.id === id)?.content.title || id)
+                .join('、')}
+            </p>
+          )}
+          {selected.externalObservationIds.length > 0 && (
+            <p className="an-muted">
+              外部の観察が根拠です。競合の動画は、この実験の本数に入りません。
+              {refs.some((item) => item.state === 'deleted') && ' 参照先は削除されています。'}
+              {refs.some((item) => item.state === 'expired') && ' 参照データは失効しています。'}
+            </p>
+          )}
           <div className="an-row">
             <button type="button" className="an-secondary" onClick={() => void (async () => {
               await window.studio.concludeAnalyticsExperiment(selected.id, 'adopt', summary || '採用');
@@ -405,8 +739,16 @@ const ArmCard = ({
   );
 };
 
-export const ExperimentNew = ({ variable }: { variable?: PrimaryVariable }) => {
+export const ExperimentNew = ({
+  variable,
+  link,
+}: {
+  variable?: PrimaryVariable;
+  link?: YoutubeExperimentLink;
+}) => {
   const { bundle, reload, openDetail } = useAnalytics();
+  const saveId = useRef(crypto.randomUUID());
+  const [saving, setSaving] = useState(false);
   const initial = variable ?? 'cta';
   const preset = VARIABLE_PRESETS[initial];
   const [primary, setPrimary] = useState<PrimaryVariable>(initial);
@@ -423,8 +765,8 @@ export const ExperimentNew = ({ variable }: { variable?: PrimaryVariable }) => {
   );
   const running = bundle?.experiments.some((item) => item.status === 'running');
   const choose = (next: PrimaryVariable) => {
-    const nextPreset = VARIABLE_PRESETS[next];
     setPrimary(next);
+    const nextPreset = VARIABLE_PRESETS[next];
     setControl(nextPreset.control);
     setVariant(nextPreset.variant);
     setHypothesis(nextPreset.hypothesis);
@@ -432,22 +774,32 @@ export const ExperimentNew = ({ variable }: { variable?: PrimaryVariable }) => {
   };
   const fixed = latest ? Object.entries(attributesOf(latest)).filter(([key]) => key !== primary) : [];
   const create = async () => {
-    await window.studio.saveAnalyticsExperiment({
-      name: `${variant} vs ${control}`,
-      hypothesis,
-      primaryVariable: primary,
-      controlLabel: control,
-      variantLabels: [variant],
-      primaryMetric: metric,
-      targetPlatform: platform,
-      plannedCountPerArm: count,
-      fixedConditions: Object.fromEntries(fixed),
-      status: running && wait ? 'planned' : 'running',
-      startedAt: running && wait ? undefined : new Date().toISOString(),
-      secondaryMetrics: ['averagePercentageViewed', 'lineupSaves'],
-    });
-    await reload();
-    openDetail('experiments');
+    if (saving) return;
+    setSaving(true);
+    try {
+      await window.studio.saveAnalyticsExperiment({
+        id: saveId.current,
+        name: `${variant} vs ${control}`,
+        hypothesis,
+        primaryVariable: primary,
+        controlLabel: control,
+        variantLabels: [variant],
+        primaryMetric: metric,
+        targetPlatform: platform,
+        plannedCountPerArm: count,
+        fixedConditions: Object.fromEntries(fixed),
+        confounders: [],
+        status: running && wait ? 'planned' : 'running',
+        startedAt: running && wait ? undefined : new Date().toISOString(),
+        secondaryMetrics: ['averagePercentageViewed', 'lineupSaves'],
+        linkedPostIds: link?.postIds ?? [],
+        comparisonWindow: link?.windowKind,
+      });
+      await reload();
+      openDetail('experiments');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <div className="an-page">
@@ -457,11 +809,16 @@ export const ExperimentNew = ({ variable }: { variable?: PrimaryVariable }) => {
             <button type="button" className="an-ghost" onClick={() => openDetail('experiments')}>← Experiments</button>
             <h1>新しい実験</h1>
             <p className="an-muted">動かす変数は1つだけ選びます。ほかの条件は前回の動画にそろえます</p>
+            {link && (
+              <p className="an-muted">
+                この比較を実験に残します。期間は{WINDOW_LABELS[link.windowKind]}。対象は{link.titles.join('、')}です。
+              </p>
+            )}
           </div>
           <AboutButton screen="experiment-new" />
         </div>
         <div className="an-work" style={{ overflow: 'auto' }}>
-          <div style={{ flex: 1 }}>
+          <div className="an-form">
             <h2>動かす変数</h2>
             <div className="an-grid-2" role="radiogroup" aria-label="動かす変数">
               {(Object.keys(VARIABLE_LABELS) as PrimaryVariable[]).map((item) => (
@@ -493,7 +850,7 @@ export const ExperimentNew = ({ variable }: { variable?: PrimaryVariable }) => {
                 今の実験が終わってから始める
               </button>
             )}
-            <button type="button" className="an-primary" onClick={() => void create()}>実験を作る</button>
+            <button type="button" className="an-primary" disabled={saving} onClick={() => void create()}>{saving ? '保存しています' : '実験を作る'}</button>
             <p className="an-muted">作ると、次のプロジェクトの定点情報で選べるようになります</p>
           </div>
           <aside className="an-side">
@@ -577,6 +934,7 @@ const InsightsPanel = () => {
               {cards.map((insight) => (
                 <button key={insight.id} type="button" className={`an-card an-insight is-${insight.status}`} onClick={() => setSelectedId(insight.id)}>
                   <strong>{insight.title}</strong>
+                  {insight.basis === 'external_observation' && <span className="an-chip">外部の観察</span>}
                   {insight.applyAsDefault && <span className="an-chip">初期値に反映</span>}
                   {insight.suggestNext && <span className="an-chip">次に試す候補</span>}
                   <span>{insight.conclusion}</span>
@@ -593,6 +951,9 @@ const InsightsPanel = () => {
           <span className="an-chip">{selected.status === 'adopted' ? '採用' : selected.status === 'testing' ? '検証中' : '非採用'}</span>
           <h2>{selected.title}</h2>
           <p>{selected.conclusion}</p>
+          {selected.basis === 'external_observation' && (
+            <p className="an-muted">外部の観察が根拠です。検証中から始め、制作の初期値には入れていません。数値の根拠は期限が切れると失効します。</p>
+          )}
           <div className="an-row">
             {columns.map((column) => (
               <button key={column.status} type="button" className="an-radio" role="radio" aria-checked={selected.status === column.status} onClick={() => void window.studio.setAnalyticsInsightStatus(selected.id, column.status).then(reload)}>

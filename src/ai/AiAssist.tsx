@@ -120,7 +120,7 @@ export const AiAssist = ({
             aria-label="AIへの指示"
             placeholder={
               help === 'captions'
-                ? '例: 今の日本語テロップを英語にして。英語は1枚4語まで'
+                ? '例: 今の日本語テロップを英語にして。英語は1枚6語まで'
                 : '例: 今の日本語の説明文を英語に訳して。URLとクローズドβの注意は残す'
             }
             onChange={(event) => setInstruction(event.target.value)}

@@ -54,6 +54,18 @@ import {
   type CtaDeliveryPlatform,
 } from '../shared/s4-cta';
 import { S7_FRAME } from '../shared/s7-cta';
+import {
+  cvSignatureTop,
+  focusFootagePlacement,
+  focusFrameOf,
+  focusScreenPoint,
+  focusTopGradientCss,
+  focusVideoMaskCss,
+  focusVignetteCss,
+  LAYOUT_FOCUS,
+  resolveFocusCrop,
+  YT_SHORTS_UI_GUIDE,
+} from '../shared/layout-focus';
 import { cardTitleBox, fitCardTitleFontSize, type CardTitleLatin } from './card-title-fit';
 import { AimZoomChrome } from './AimZoomChrome';
 import { AimMarker, AnnotationDim } from './AnnotationMarks';
@@ -78,6 +90,8 @@ export type LineupShortProps = {
   audioTracks?: AudioTrack[];
   withoutBgm?: boolean;
   showSafeZone?: boolean;
+  /** プレビュー専用。書き出しは渡さない。 */
+  showYtGuide?: boolean;
   frozenFrames?: Partial<Record<CardFrameSlot, string>>;
   /** 未指定は編集プレビュー（YouTube向けの高評価CTAを見せる）。 */
   deliveryPlatform?: CtaDeliveryPlatform;
@@ -425,7 +439,11 @@ const SceneMedia = ({
   const frame = useCurrentFrame();
   const speed = item?.speed ?? 1;
   const sourceOffset = item?.sourceOffset ?? 0;
-  const layout = item?.layout ?? scene.layout916;
+  // 切り抜き画面は scene.layout916 を更新する。詳細編集済みタイムラインの item.layout は古いまま残ることがある。
+  const layout =
+    project.scenes.find((entry) => entry.sceneKey === (item?.sceneKey ?? scene.sceneKey))?.layout916 ??
+    item?.layout ??
+    scene.layout916;
   const clip = (() => {
     if (item?.sceneKey === 'loop') {
       const resolved = playbackClip(project, 'loop');
@@ -462,6 +480,9 @@ const SceneMedia = ({
         extrapolateRight: 'clamp',
       })
     : 1;
+  const focusFrame = focusFrameOf(asset.meta.width, asset.meta.height);
+  const focusCrop = layout === 'focus' ? resolveFocusCrop(focusFrame, scene.cropCenterX, scene.cropZoom, scene.cropCenterY) : null;
+  const focusBox = LAYOUT_FOCUS.video;
   const videoStyle: CSSProperties =
     layout === 'center-crop' || layout === 'split'
       ? {
@@ -472,14 +493,26 @@ const SceneMedia = ({
           transform: `scale(${zoom})`,
           transformOrigin: `${(scene.zoom?.x ?? 0.5) * 100}% ${(scene.zoom?.y ?? 0.5) * 100}%`,
         }
-      : {
-          width: S7_FRAME.width,
-          height: S7_FRAME.footageHeight,
-          objectFit: 'cover',
-          position: 'absolute',
-          top: S7_FRAME.footageTop,
-          left: 0,
-        };
+      : layout === 'focus' && focusCrop
+        ? {
+            position: 'absolute',
+            width: (focusFrame.w * focusBox.w) / focusCrop.w,
+            height: (focusFrame.h * focusBox.h) / focusCrop.h,
+            left: (-focusCrop.x * focusBox.w) / focusCrop.w,
+            top: (-focusCrop.y * focusBox.h) / focusCrop.h,
+            objectFit: 'fill',
+            filter: `contrast(${LAYOUT_FOCUS.grade.contrast}) saturate(${LAYOUT_FOCUS.grade.saturate})`,
+            transform: `scale(${zoom})`,
+            transformOrigin: `${(scene.zoom?.x ?? 0.5) * 100}% ${(scene.zoom?.y ?? 0.5) * 100}%`,
+          }
+        : {
+            width: S7_FRAME.width,
+            height: S7_FRAME.footageHeight,
+            objectFit: 'cover',
+            position: 'absolute',
+            top: S7_FRAME.footageTop,
+            left: 0,
+          };
 
   const origin = Math.round((clip.in + sourceOffset) * fps);
   const playedFrames = Math.max(
@@ -544,16 +577,47 @@ const SceneMedia = ({
   );
 
   if (layout === 'center-crop') return foreground;
+  const blurred = video(Math.round(clip.in * fps), false, {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    filter: 'blur(36px) brightness(.38)',
+    transform: 'scale(1.1)',
+  });
+  if (layout !== 'focus') {
+    return (
+      <>
+        {blurred}
+        {foreground}
+      </>
+    );
+  }
+  const mask = focusVideoMaskCss();
   return (
     <>
-      {video(Math.round(clip.in * fps), false, {
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        filter: 'blur(36px) brightness(.38)',
-        transform: 'scale(1.1)',
-      })}
-      {foreground}
+      {blurred}
+      <div
+        style={{
+          position: 'absolute',
+          top: focusBox.y,
+          left: focusBox.x,
+          width: focusBox.w,
+          height: focusBox.h,
+          overflow: 'hidden',
+          WebkitMaskImage: mask,
+          maskImage: mask,
+        }}
+      >
+        {foreground}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: focusVignetteCss(),
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
     </>
   );
 };
@@ -562,10 +626,12 @@ const Caption = ({
   text,
   accent,
   kind,
+  focusHook = false,
 }: {
   text: string;
   accent: string;
   kind: 'hook' | 'step' | 'throw';
+  focusHook?: boolean;
 }): ReactNode => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -608,7 +674,7 @@ const Caption = ({
         ...styles[kind],
       }}
     >
-      {floating && (
+      {floating && !focusHook && (
         <>
           {/* 字の形に沿った黒い影。明るい映像の上でも輪郭が残る。 */}
           <div
@@ -645,7 +711,16 @@ const Caption = ({
           </div>
         </>
       )}
-      <div style={{ position: 'relative', textShadow: floating ? 'none' : '0 2px 10px rgba(0,0,0,0.55)' }}>
+      <div
+        style={{
+          position: 'relative',
+          textShadow: focusHook ? LAYOUT_FOCUS.hookShadow : floating ? 'none' : '0 2px 10px rgba(0,0,0,0.55)',
+          WebkitTextStroke: focusHook
+            ? `${LAYOUT_FOCUS.hookStroke.outside * 2}px ${LAYOUT_FOCUS.hookStroke.color}`
+            : undefined,
+          paintOrder: focusHook ? 'stroke fill' : undefined,
+        }}
+      >
         <AccentText accent={accent}>{text}</AccentText>
       </div>
     </div>
@@ -793,6 +868,13 @@ const CardStepMedia = ({
 const CARD_TITLE_LINES = 2;
 const CARD_TITLE_LINE_HEIGHT = 1.15;
 
+const cardSideLabel = (side: Project['lineup']['side']): string =>
+  side === 'attack' ? 'ATTACKER' : 'DEFENDER';
+
+/** 完成カードとX用カードの見出し上。マップ / サイト / 攻守。 */
+const cardPlaceLabel = (project: Project): string =>
+  `${project.lineup.map.toUpperCase()} / ${project.lineup.site} SITE / ${cardSideLabel(project.lineup.side)}`;
+
 const fittedTitleSize = (
   text: string,
   language: Language,
@@ -895,7 +977,7 @@ const LineupCardStack = ({
                 color: accent,
               }}
             >
-              {project.lineup.map.toUpperCase()} / {project.lineup.site} SITE
+              {cardPlaceLabel(project)}
             </span>
             <div
               style={{
@@ -1168,7 +1250,7 @@ const LineupCardX45Aim = ({
     <AbsoluteFill style={{ backgroundColor: COLORS.background, color: COLORS.text }}>
       <GridBackground />
       <div style={{ position: 'absolute', left: padX, top: metaTop, color: accent, fontSize: 18, fontWeight: 700 }}>
-        {project.lineup.map.toUpperCase()} / {project.lineup.site} SITE / {project.lineup.side.toUpperCase()}
+        {cardPlaceLabel(project)}
       </div>
       <AgentAbilityBadge
         project={project}
@@ -1309,8 +1391,7 @@ const LineupCardAim = ({
     <AbsoluteFill style={{ backgroundColor: COLORS.background, color: COLORS.text }}>
       <GridBackground />
       <div style={{ position: 'absolute', left: 72, top: 210, color: accent, fontSize: 28 }}>
-        {project.lineup.map.toUpperCase()} / {project.lineup.site} SITE /{' '}
-        {project.lineup.side.toUpperCase()}
+        {cardPlaceLabel(project)}
       </div>
       <AgentAbilityBadge
         project={project}
@@ -1707,10 +1788,12 @@ const S4CtaBlock = ({
   project,
   language,
   durationSec,
+  focus = false,
 }: {
   project: Project;
   language: Language;
   durationSec: number;
+  focus?: boolean;
 }): ReactNode => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -1743,8 +1826,8 @@ const S4CtaBlock = ({
         display: 'flex',
         alignItems: 'center',
         gap: S4_CTA.gap,
-        background: S4_CTA.background,
-        borderRadius: S4_CTA.radius,
+        background: focus ? LAYOUT_FOCUS.cvCtaPanel.bg : S4_CTA.background,
+        borderRadius: focus ? LAYOUT_FOCUS.cvCtaPanel.radius : S4_CTA.radius,
         zIndex: 5,
         pointerEvents: 'none',
       }}
@@ -1793,7 +1876,15 @@ const S4CtaBlock = ({
   );
 };
 
-const Watermark = ({ top = 1420, compact = false }: { top?: number; compact?: boolean }): ReactNode => {
+const Watermark = ({
+  top = S7_FRAME.watermark.y,
+  compact = false,
+  shadow = false,
+}: {
+  top?: number;
+  compact?: boolean;
+  shadow?: boolean;
+}): ReactNode => {
   const height = compact ? LIKE_CTA.watermarkHeight : 48;
   return (
     <div
@@ -1807,6 +1898,7 @@ const Watermark = ({ top = 1420, compact = false }: { top?: number; compact?: bo
         gap: compact ? 8 : 12,
         color: COLORS.text,
         opacity: 0.85,
+        filter: shadow ? LAYOUT_FOCUS.signatureShadow : undefined,
         fontFamily: 'Montserrat, sans-serif',
         fontWeight: 800,
         fontSize: compact ? 20 : 24,
@@ -1819,8 +1911,18 @@ const Watermark = ({ top = 1420, compact = false }: { top?: number; compact?: bo
   );
 };
 
-const ArrowOverlay = ({ item }: { item: TimelineItem }): ReactNode =>
-  item.arrow ? (
+const arrowInsideFocus = (arrow: NonNullable<TimelineItem['arrow']>): boolean => {
+  const box = LAYOUT_FOCUS.video;
+  const inside = (x: number, y: number): boolean =>
+    x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+  return (
+    inside(arrow.x1 * S7_FRAME.width, arrow.y1 * S7_FRAME.height) &&
+    inside(arrow.x2 * S7_FRAME.width, arrow.y2 * S7_FRAME.height)
+  );
+};
+
+const ArrowOverlay = ({ item, focus = false }: { item: TimelineItem; focus?: boolean }): ReactNode =>
+  item.arrow && (!focus || arrowInsideFocus(item.arrow)) ? (
     <svg
       style={{ position: 'absolute', inset: 0, width: 1080, height: 1920, zIndex: 2 }}
       viewBox="0 0 1080 1920"
@@ -1871,14 +1973,34 @@ const AimZoomFootage = ({
         extrapolateRight: 'clamp',
       })
     : 1;
-  const style: CSSProperties = {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    objectPosition: `${scene.cropCenterX * 100}% 50%`,
+  const focus = scene.layout916 === 'focus';
+  const focusFrame = focusFrameOf(asset.meta.width, asset.meta.height);
+  const placement = focus
+    ? focusFootagePlacement(focusFrame, scene.cropCenterX, scene.cropZoom, scene.cropCenterY)
+    : null;
+  const motion: CSSProperties = {
     transform: `scale(${ken})`,
     transformOrigin: `${(scene.zoom?.x ?? 0.5) * 100}% ${(scene.zoom?.y ?? 0.5) * 100}%`,
   };
+  // 拡大絵は本編と同じ画素を指す。フォーカスを中央切り抜きの cover で読むと、合わせ位置より上を映す。
+  const style: CSSProperties = placement
+    ? {
+        position: 'absolute',
+        left: `${placement.video.x * 100}%`,
+        top: `${placement.video.y * 100}%`,
+        width: `${placement.video.w * 100}%`,
+        height: `${placement.video.h * 100}%`,
+        objectFit: 'fill',
+        filter: `contrast(${LAYOUT_FOCUS.grade.contrast}) saturate(${LAYOUT_FOCUS.grade.saturate})`,
+        ...motion,
+      }
+    : {
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        objectPosition: `${scene.cropCenterX * 100}% 50%`,
+        ...motion,
+      };
   const video = (startFrom: number): ReactNode => (
     <OffthreadVideo
       src={src}
@@ -1889,9 +2011,28 @@ const AimZoomFootage = ({
       style={style}
     />
   );
+  const mount = (node: ReactNode): ReactNode => {
+    if (!placement) return node;
+    return (
+      <div style={{ position: 'absolute', inset: 0 }}>
+        <div
+          style={{
+            position: 'absolute',
+            left: `${placement.box.x * 100}%`,
+            top: `${placement.box.y * 100}%`,
+            width: `${placement.box.w * 100}%`,
+            height: `${placement.box.h * 100}%`,
+            overflow: 'hidden',
+          }}
+        >
+          {node}
+        </div>
+      </div>
+    );
+  };
   const freeze = scene.freeze;
-  if (!freeze?.enabled || speed !== 1 || sourceOffset !== 0) return video(origin);
-  return (
+  if (!freeze?.enabled || speed !== 1 || sourceOffset !== 0) return mount(video(origin));
+  return mount(
     <Series>
       <Series.Sequence durationInFrames={Math.round(freeze.at * fps)}>{video(origin)}</Series.Sequence>
       <Series.Sequence durationInFrames={Math.round(freeze.duration * fps)}>
@@ -1900,7 +2041,7 @@ const AimZoomFootage = ({
       <Series.Sequence durationInFrames={1_000_000}>
         {video(Math.round((clip.in + freeze.at) * fps))}
       </Series.Sequence>
-    </Series>
+    </Series>,
   );
 };
 
@@ -1923,7 +2064,7 @@ const SceneContent = ({
     !project.timelineMix?.hideCaptions &&
     ctaCaption?.hidden !== true &&
     likeCtaActive(project, deliveryPlatform);
-  if (sceneKey === 'card' || item?.presentation === 'guide-card') {
+  if (sceneKey === 'card') {
     if (project.timelineMix?.hideVideo) return <AbsoluteFill style={{ backgroundColor: COLORS.background }} />;
     return <LineupCard project={project} language={language} mediaBaseUrl={mediaBaseUrl} />;
   }
@@ -1940,6 +2081,23 @@ const SceneContent = ({
   const captionText = caption
     ? resolveVariables(captionTextFor(caption, language, 'video'), project, language)
     : '';
+  const focus = scene.layout916 === 'focus';
+  const sourceClip = playbackClip(project, sceneKey);
+  const sourceAsset = project.assets.find((entry) => entry.id === sourceClip?.assetId);
+  const focusFrame = focusFrameOf(sourceAsset?.meta.width, sourceAsset?.meta.height);
+  const focusMarker =
+    focus && scene.aimMarker
+      ? focusScreenPoint(
+          focusFrame,
+          scene.cropCenterX,
+          scene.aimMarker.x * focusFrame.w,
+          scene.aimMarker.y * focusFrame.h,
+          scene.cropZoom,
+          scene.cropCenterY,
+        )
+      : null;
+  const markerX = focusMarker ? focusMarker.x / S7_FRAME.width : (scene.aimMarker?.x ?? 0);
+  const markerY = focusMarker ? focusMarker.y / S7_FRAME.height : (scene.aimMarker?.y ?? 0);
   return (
     <AbsoluteFill style={{ backgroundColor: COLORS.background }}>
       <GridBackground />
@@ -1952,21 +2110,22 @@ const SceneContent = ({
           item={item}
         />
       )}
-      {item && <ArrowOverlay item={item} />}
+      {item && <ArrowOverlay item={item} focus={focus} />}
       {aimMarkerVisibleAt(scene.aimMarker, sceneSourceTime(frame, fps, sourceScene, item)) &&
         scene.aimMarker &&
+        (!focusMarker || focusMarker.inside) &&
         (() => {
           const aimZoom = scene.aimZoom?.enabled ? scene.aimZoom : null;
           const chrome = zoomChromeThickness(getAnnotationStyle(annotationStyleOf(project.annotationStyle)));
           const videoZoom = aimZoom
-            ? resolveVideoAimZoom(aimZoom, { x: scene.aimMarker.x, y: scene.aimMarker.y }, chrome, width, height)
+            ? resolveVideoAimZoom(aimZoom, { x: markerX, y: markerY }, chrome, width, height)
             : null;
           return (
             <>
               <AnnotationDim
                 style={annotationStyleOf(project.annotationStyle)}
                 frameWidth={width}
-                center={{ x: scene.aimMarker.x, y: scene.aimMarker.y }}
+                center={{ x: markerX, y: markerY }}
                 shortSide={Math.min(width, height)}
                 zoom={Boolean(videoZoom)}
                 cropSize={videoZoom?.source.size}
@@ -1991,8 +2150,8 @@ const SceneContent = ({
                 />
               ) : (
                 <AimMarker
-                  x={scene.aimMarker.x}
-                  y={scene.aimMarker.y}
+                  x={markerX}
+                  y={markerY}
                   accent={accent}
                   size={scene.aimMarker.size ?? 1}
                   style={annotationStyleOf(project.annotationStyle)}
@@ -2003,6 +2162,20 @@ const SceneContent = ({
             </>
           );
         })()}
+      {focus && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: S7_FRAME.width,
+            height: LAYOUT_FOCUS.topGradient.stops[LAYOUT_FOCUS.topGradient.stops.length - 1]?.[0] ?? 800,
+            background: focusTopGradientCss(),
+            zIndex: 3,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
       {LABELS[sceneKey] && (
         <div
           style={{
@@ -2027,6 +2200,7 @@ const SceneContent = ({
         <Caption
           text={captionText}
           accent={accent}
+          focusHook={focus && caption?.styleId === 'cap.hook'}
           kind={
             caption?.styleId === 'cap.hook'
               ? 'hook'
@@ -2036,49 +2210,7 @@ const SceneContent = ({
           }
         />
       )}
-      {item?.presentation === 'guide-title' && (
-        <div
-          style={{
-            position: 'absolute',
-            left: 72,
-            top: 780,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 18,
-            padding: '18px 24px',
-            background: 'rgba(15,25,35,.92)',
-            zIndex: 4,
-          }}
-        >
-          <div
-            style={{
-              width: 92,
-              height: 92,
-              borderRadius: '50%',
-              border: `4px solid ${accent}`,
-              display: 'grid',
-              placeItems: 'center',
-              fontSize: 42,
-              fontWeight: 900,
-            }}
-          >
-            {project.lineup.agent.slice(0, 1).toUpperCase()}
-          </div>
-          <div>
-            <div style={{ fontSize: 42, fontWeight: 900 }}>
-              {project.lineup.map.toUpperCase()} — {project.lineup.site}
-            </div>
-            <div style={{ color: accent, fontSize: 28, fontWeight: 800 }}>NEW</div>
-          </div>
-        </div>
-      )}
-      {item?.presentation === 'guide-steps' && (
-        <div style={{ position: 'absolute', left: 72, top: 180, width: 840, zIndex: 4 }}>
-          <div style={{ color: accent, fontSize: 34, fontWeight: 800 }}>STEP 1/3</div>
-          <div style={{ fontSize: 64, fontWeight: 900 }}>{project.lineup.throwType.en}</div>
-        </div>
-      )}
-      {(sceneKey === 'demo' || item?.presentation === 'guide-demo') && (
+      {sceneKey === 'demo' && (
         <div
           style={{
             position: 'absolute',
@@ -2108,7 +2240,7 @@ const SceneContent = ({
         <S4LikeCtaBlock project={project} language={language} durationSec={item?.duration ?? 0} />
       )}
       {sceneKey === 'throw' && ctaDesign === 's4-block' && !like && !project.timelineMix?.hideCaptions && (
-        <S4CtaBlock project={project} language={language} durationSec={item?.duration ?? 0} />
+        <S4CtaBlock project={project} language={language} durationSec={item?.duration ?? 0} focus={focus} />
       )}
       {sceneKey === 'loop' && ctaDesign === 's7-band' && !project.timelineMix?.hideCaptions &&
         (() => {
@@ -2127,11 +2259,14 @@ const SceneContent = ({
       {sceneKey !== 'hook' && (
         <Watermark
           compact={like}
+          shadow={focus}
           top={
             like
               ? likeWatermarkTop()
               : sceneKey === 'throw' && ctaDesign === 's4-block'
-                ? s4WatermarkTop()
+                ? focus
+                  ? cvSignatureTop()
+                  : s4WatermarkTop()
                 : undefined
           }
         />
@@ -2162,27 +2297,66 @@ const SafeZoneGuide = (): ReactNode => (
         background: 'rgba(255,70,85,.28)',
       }}
     />
-    <div style={{ position: 'absolute', left: 49, top: 0, width: 982, height: 373, border: '3px dashed rgba(255,107,102,.9)' }} />
-    <div style={{ position: 'absolute', left: 880, top: 1010, width: 151, height: 730, border: '3px dashed rgba(255,107,102,.9)' }} />
-    <div style={{ position: 'absolute', left: 49, top: 1440, width: 982, height: 480, border: '3px dashed rgba(255,107,102,.9)' }} />
-    <div style={{ position: 'absolute', left: 0, top: 0, width: 49, height: 1920, background: 'rgba(0,0,0,.45)' }} />
-    <div style={{ position: 'absolute', left: 1031, top: 0, width: 49, height: 1920, background: 'rgba(0,0,0,.45)' }} />
-    <div
-      style={{
-        position: 'absolute',
-        left: 72,
-        top: 16,
-        padding: '4px 10px',
-        background: '#C9302C',
-        color: '#fff',
-        fontSize: 22,
-        fontWeight: 700,
-      }}
-    >
-      YouTube UIは推定（書き出しには入りません）
-    </div>
   </AbsoluteFill>
 );
+
+const guideBand = (top: number, height: number, left = 0, width = 1080): CSSProperties => ({
+  position: 'absolute',
+  left,
+  top,
+  width,
+  height,
+  boxSizing: 'border-box',
+  border: '3px dashed rgba(168,120,255,.95)',
+  background: 'rgba(168,120,255,.16)',
+});
+
+/** iPhone 実測（2026-10-24）の YouTube Shorts UI。プレビューだけ。 */
+const YtShortsUiGuide = (): ReactNode => {
+  const top = YT_SHORTS_UI_GUIDE.top.y;
+  const rail = YT_SHORTS_UI_GUIDE.rightRail;
+  const bottom = YT_SHORTS_UI_GUIDE.bottom.y;
+  const crop = YT_SHORTS_UI_GUIDE.sideCrop;
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none', zIndex: 8 }}>
+      <div style={guideBand(top[0], top[1] - top[0])} />
+      <div style={guideBand(rail.y[0], rail.y[1] - rail.y[0], rail.x[0], rail.x[1] - rail.x[0])} />
+      <div style={guideBand(bottom[0], bottom[1] - bottom[0])} />
+      <div
+        style={{
+          position: 'absolute',
+          left: crop,
+          top: 0,
+          bottom: 0,
+          borderLeft: '2px dotted rgba(168,120,255,.95)',
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: 1080 - crop,
+          top: 0,
+          bottom: 0,
+          borderLeft: '2px dotted rgba(168,120,255,.95)',
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          left: 72,
+          top: 16,
+          padding: '4px 10px',
+          background: '#5B3A9E',
+          color: '#fff',
+          fontSize: 22,
+          fontWeight: 700,
+        }}
+      >
+        YouTube の UI ガイド（タブは動画の外。書き出しには入りません）
+      </div>
+    </AbsoluteFill>
+  );
+};
 
 const ClipTransition = ({
   item,
@@ -2262,6 +2436,7 @@ export const LineupShortStandard = (props: LineupShortProps): ReactNode => {
       />
       <SoundEffects project={project} mediaBaseUrl={props.mediaBaseUrl} tracks={tracks} />
       {props.showSafeZone && <SafeZoneGuide />}
+      {props.showYtGuide && <YtShortsUiGuide />}
     </AbsoluteFill>
   );
 };
