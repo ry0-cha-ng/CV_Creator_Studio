@@ -19,6 +19,8 @@ import { AnalyticsService, refreshAnalytics } from './services/analytics-service
 import { aiProviderChoiceSchema } from '../../shared/ai';
 import { catalogRootFromApp, resolveCatalogMediaFile } from './services/catalog-path';
 import { ExportService } from './services/export-service';
+import { LongExportService } from './services/long-export-service';
+import { LongProjectService } from './services/long-project-service';
 import { LibraryService } from './services/library-service';
 import { MediaService } from './services/media-service';
 import { ProjectService } from './services/project-service';
@@ -151,6 +153,68 @@ const exportService = new ExportService(
   libraryService,
   (record) => analyticsService.freezePublishedExport(record),
 );
+
+const broadcast = (channel: string, value: unknown): void => {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, value);
+};
+const longProjectService = new LongProjectService(
+  () => projectService.getWorkspace(),
+  projectService,
+  (progress) => broadcast('long:media-progress', progress),
+);
+const longExportService = new LongExportService(
+  () => projectService.getWorkspace(),
+  (id) => libraryService.getAudio(id),
+  (snapshot) => {
+    analyticsService.freezeLongExport(snapshot);
+  },
+  (trackId, projectId, variantId) => {
+    try {
+      libraryService.recordUsage(trackId, projectId, variantId, new Date().toISOString());
+    } catch {
+      // 使用履歴の記録に失敗しても書き出しは成功として扱う
+    }
+  },
+);
+
+const registerLongIpc = (): void => {
+  ipcMain.handle('long:list', () => longProjectService.list());
+  ipcMain.handle('long:load', (_event, id: string) => longProjectService.load(id));
+  ipcMain.handle('long:save', (_event, project) => longProjectService.save(project));
+  ipcMain.handle('long:create', (_event, options) => longProjectService.create(options));
+  ipcMain.handle('long:duplicate', (_event, id: string) => longProjectService.duplicate(id));
+  ipcMain.handle('long:remove', (_event, id: string) => longProjectService.remove(id));
+  ipcMain.handle('long:short-sources', () => longProjectService.shortSources());
+  ipcMain.handle('long:import-media', (_event, projectId: string, kind, paths?: string[]) =>
+    longProjectService.importMedia(projectId, kind === 'image' ? 'image' : 'video', Array.isArray(paths) ? paths : undefined),
+  );
+  ipcMain.handle('long:import-images', (_event, projectId: string, purpose, paths?: string[]) =>
+    longProjectService.importImages(
+      projectId,
+      purpose === 'avatar' || purpose === 'cutin' ? purpose : 'still',
+      Array.isArray(paths) ? paths : undefined,
+    ),
+  );
+  ipcMain.handle('long:import-image-folder', (_event, projectId: string) => longProjectService.importImageFolder(projectId));
+  ipcMain.handle('long:extract-audio', (_event, projectId: string, asset) => longProjectService.extractAudio(projectId, asset));
+  ipcMain.handle('long:relink', (_event, projectId: string, asset) => longProjectService.relink(projectId, asset));
+  ipcMain.handle('long:check-assets', (_event, project) => longProjectService.checkAssets(project));
+  ipcMain.handle('long:export', (event, request) => longExportService.export(request, event.sender));
+  ipcMain.handle('long:export-cancel', () => longExportService.cancel());
+  ipcMain.handle('long:create-state-get', async () => {
+    const settings = await readStudioSettings();
+    return { createMode: settings.createMode ?? 'short', lastLongProjectId: settings.lastLongProjectId };
+  });
+  ipcMain.handle('long:create-state-set', async (_event, state: { createMode?: unknown; lastLongProjectId?: unknown }) => {
+    const patch: { createMode?: 'short' | 'long'; lastLongProjectId?: string } = {};
+    if (state.createMode === 'short' || state.createMode === 'long') patch.createMode = state.createMode;
+    if (typeof state.lastLongProjectId === 'string') patch.lastLongProjectId = state.lastLongProjectId;
+    const settings = await patchStudioSettings(patch);
+    return { createMode: settings.createMode ?? 'short', lastLongProjectId: settings.lastLongProjectId };
+  });
+  ipcMain.handle('long:open-project-file', () => longProjectService.openProjectFile());
+  ipcMain.handle('long:project-format', (_event, id: string) => longProjectService.projectFormat(id));
+};
 
 const mediaContentType = (filePath: string): string => {
   switch (path.extname(filePath).toLowerCase()) {
@@ -732,6 +796,7 @@ app.whenReady().then(async () => {
     return serveMedia(request, mediaService.resolveWorkspacePath(relativePath));
   });
   registerIpc();
+  registerLongIpc();
   createWindow();
   const catchUpYoutube = (): void => {
     youtubeService.syncOnStartup().catch(() => undefined);

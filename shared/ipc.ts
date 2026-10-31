@@ -27,6 +27,7 @@ import type {
   VideoPage,
 } from './schema/competitor-observation';
 import type { DeliveryPresetId } from './delivery-presets';
+import type { LongStudioApi } from './long/ipc';
 import type { PublishingSettings, PublishingView, StudioNextAction, WorkflowTask } from './publishing';
 import type { InheritItem, Project } from './schema/project';
 import type { SceneKey } from './schema/project-keys';
@@ -109,6 +110,8 @@ export type ExportProgress = {
 };
 
 export interface StudioApi {
+  /** 横動画作成モード */
+  long: LongStudioApi;
   selectWorkspace(): Promise<string | null>;
   getWorkspace(): Promise<string | null>;
   createProject(options?: ProjectCreateOptions): Promise<Project>;

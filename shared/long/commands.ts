@@ -1021,3 +1021,45 @@ export const captionDraft = (
         : { preset: 'reaction', x: 0.5, y: 0.45, width: 0.5, size: 72, align: 'center', color: '#FFE08A', accent: '#FF4655', background: false },
   sceneId,
 });
+
+/**
+ * 要素を時間方向に動かす。アンカーの種類は変えず、オフセット（素材基準なら素材時刻）だけを変える。
+ * 素材基準のアンカーは配置の速度で素材時刻へ換算する。
+ */
+export const shiftAnchor = (project: LongProject, anchor: Anchor, deltaTicks: Ticks): Anchor => {
+  switch (anchor.kind) {
+    case 'project':
+      return { ...anchor, ticks: Math.max(0, anchor.ticks + deltaTicks) };
+    case 'scene':
+    case 'chapter':
+    case 'event':
+      return { ...anchor, offset: anchor.offset + deltaTicks };
+    case 'source': {
+      const placement = project.placements.find((item) => item.id === anchor.placementId);
+      const main =
+        placement?.role === 'main'
+          ? placement
+          : placement
+            ? project.placements.find((item): item is MainPlacement => item.role === 'main' && item.id === placement.parentId)
+            : undefined;
+      const speed = main?.speed ?? 1;
+      return { ...anchor, ticks: Math.max(0, anchor.ticks + Math.round(deltaTicks * speed)) };
+    }
+  }
+};
+
+export type TimedKey = 'captions' | 'overlays' | 'avatarEvents' | 'se' | 'ducking' | 'bgm';
+
+export const moveTimed = (project: LongProject, key: TimedKey, id: string, deltaTicks: Ticks): LongProject =>
+  mutate(project, (draft) => {
+    const list = draft[key] as Array<{ id: string; anchor: Anchor }>;
+    const item = list.find((entry) => entry.id === id);
+    if (item) item.anchor = shiftAnchor(project, item.anchor, deltaTicks);
+  });
+
+export const resizeTimed = (project: LongProject, key: Exclude<TimedKey, 'se'>, id: string, duration: Ticks): LongProject =>
+  mutate(project, (draft) => {
+    const list = draft[key] as Array<{ id: string; duration: Ticks }>;
+    const item = list.find((entry) => entry.id === id);
+    if (item) item.duration = Math.max(12_000, duration);
+  });

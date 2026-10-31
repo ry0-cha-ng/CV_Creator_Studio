@@ -382,7 +382,8 @@ const AvatarView = ({
         opacity: piece.motion === 'fade' ? motion.opacity : 1,
       }}
     >
-      <Img src={mediaUrl(mediaBaseUrl, src)} style={{ width: '100%', height: '100%' }} />
+      {/* 透明余白は切り取らず、セット共通の枠に等方で収める（縦横に伸ばさない） */}
+      <Img src={mediaUrl(mediaBaseUrl, src)} style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: `${piece.set.originX * 100}% ${piece.set.originY * 100}%` }} />
     </div>
   );
 };

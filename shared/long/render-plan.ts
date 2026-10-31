@@ -327,7 +327,7 @@ export type PlanAudioPiece = {
   fadeOut: number;
 };
 
-export type PlanDuck = { from: number; to: number; attack: number; release: number; gain: number };
+export type PlanDuck = { id: string; from: number; to: number; attack: number; release: number; gain: number };
 
 export type PlanBgm = {
   id: string;
@@ -1201,6 +1201,7 @@ export const buildRenderPlan = (project: LongProject, options: PlanOptions): Ren
       const timed = placeTimed(ctx, { kind: 'audio', id: duck.id }, duck.anchor, duck.duration, duck.sceneId, 'BGMの下げ');
       if (!timed) continue;
       ducks.push({
+        id: duck.id,
         from: ctx.frame(timed.start),
         to: ctx.frame(timed.end),
         attack: Math.round(ticksToSec(duck.attack) * fps),

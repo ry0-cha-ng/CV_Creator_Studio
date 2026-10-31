@@ -18,6 +18,8 @@ import { TimelinePanel } from './TimelinePanel';
 import { PreviewStage } from './PreviewStage';
 import { GuideHome } from './guide/GuideHome';
 import { GuideShell } from './guide/GuideShell';
+import { CreateModes, type CreateMode } from './long/CreateModes';
+import { useLongStore } from './long/store';
 import './analytics.css';
 import { AppNav } from './analytics/chrome';
 import { AnalyticsContext, type AnalyticsPage, type DetailTab } from './analytics/context';
@@ -82,6 +84,14 @@ export const App = () => {
   const [publishHold, setPublishHold] = useState(false);
   const [prefillVariable, setPrefillVariable] = useState<PrimaryVariable | undefined>(undefined);
   const [experimentLink, setExperimentLink] = useState<YoutubeExperimentLink | undefined>(undefined);
+  /** 「作る」の制作モード（ショート／横動画）。前回のモードを復元する */
+  const [createMode, setCreateMode] = useState<CreateMode>('short');
+  useEffect(() => {
+    void window.studio.long
+      .getCreateState()
+      .then((state) => setCreateMode(state.createMode))
+      .catch(() => undefined);
+  }, []);
   const {
     workspace,
     projects,
@@ -594,7 +604,18 @@ export const App = () => {
         openProject: (projectId: string) => {
           setArea('create');
           setAnalyticsPage('home');
-          void run(async () => store.setProject(await window.studio.loadProject(projectId)));
+          void run(async () => {
+            // 開く先は保存されている制作形式で決める
+            const format = await window.studio.long.projectFormat(projectId);
+            if (format.format === 'long') {
+              useLongStore.getState().open(await window.studio.long.load(projectId));
+              setCreateMode('long');
+              void window.studio.long.setCreateState({ createMode: 'long', lastLongProjectId: projectId });
+              return;
+            }
+            store.setProject(await window.studio.loadProject(projectId));
+            setCreateMode('short');
+          });
         },
       }}
     >
@@ -620,6 +641,33 @@ export const App = () => {
       </div>
     </AnalyticsContext.Provider>
   );
+
+  /** ショート側の保存（制作モードを移動する前に呼ぶ）。失敗したら移動しない */
+  const saveShortNow = async (): Promise<boolean> => {
+    const state = useStudioStore.getState();
+    if (!state.project || !state.dirty) return true;
+    try {
+      const result = await persistProject(state.projectRevision, state.project);
+      return result !== 'rejected';
+    } catch (saveError) {
+      store.setError(`保存に失敗しました: ${errorMessage(saveError)}`);
+      return false;
+    }
+  };
+  const createShell = (child: ReactNode) =>
+    shell(
+      <CreateModes
+        mode={createMode}
+        onModeChange={setCreateMode}
+        short={child}
+        saveShort={saveShortNow}
+        pauseShort={() => playerRef.current?.pause()}
+        openShortProject={async (id) => {
+          setArea('create');
+          store.setProject(await window.studio.loadProject(id));
+        }}
+      />,
+    );
 
   if (!workspace) {
     return (
@@ -659,7 +707,7 @@ export const App = () => {
   }
 
   if (!project) {
-    return shell(
+    return createShell(
       <GuideHome
         onBackup={backupProjects}
         onRestore={restoreProjects}
@@ -749,7 +797,7 @@ export const App = () => {
   );
 
   if (project.guide.mode === 'guide') {
-    return shell(
+    return createShell(
       <>
         <GuideShell
           project={project}
@@ -776,7 +824,7 @@ export const App = () => {
     );
   }
 
-  return shell(
+  return createShell(
     <div className="app-shell">
       <header className="topbar">
         <div className="top-actions">

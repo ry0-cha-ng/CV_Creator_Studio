@@ -9,6 +9,9 @@ export const DEFAULT_WORKSPACE = 'C:\\Users\\ry0ch\\デスクトップ\\VCV\\VCV
 
 export type StudioSettings = {
   workspace?: string;
+  /** 「作る」の制作モード（ショート／横動画）と、横動画側で最後に開いていた Project */
+  createMode?: 'short' | 'long';
+  lastLongProjectId?: string;
   aiProvider?: AiProviderChoice;
   youtubeSync?: YoutubeSyncSettings;
 };
@@ -20,6 +23,10 @@ export const readStudioSettings = async (): Promise<StudioSettings> => {
     const raw = JSON.parse(await fs.readFile(settingsPath(), 'utf8')) as Record<string, unknown>;
     const settings: StudioSettings = {};
     if (typeof raw.workspace === 'string') settings.workspace = raw.workspace;
+    if (raw.createMode === 'short' || raw.createMode === 'long') settings.createMode = raw.createMode;
+    if (typeof raw.lastLongProjectId === 'string' && /^[a-zA-Z0-9_-]+$/.test(raw.lastLongProjectId)) {
+      settings.lastLongProjectId = raw.lastLongProjectId;
+    }
     const provider = aiProviderChoiceSchema.safeParse(raw.aiProvider);
     if (provider.success) settings.aiProvider = provider.data;
     const youtubeSync = youtubeSyncSettingsSchema.safeParse(raw.youtubeSync ?? {});

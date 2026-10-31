@@ -7,7 +7,36 @@ import type {
 import type { Project } from '../../shared/schema/project';
 import type { AudioRegistration } from '../../shared/schema/audio';
 
+const subscribe = <T>(channel: string, callback: (value: T) => void): (() => void) => {
+  const listener = (_event: unknown, value: T): void => callback(value);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+};
+
 const api: StudioApi = {
+  long: {
+    list: () => ipcRenderer.invoke('long:list'),
+    load: (id) => ipcRenderer.invoke('long:load', id),
+    save: (project) => ipcRenderer.invoke('long:save', project),
+    create: (options) => ipcRenderer.invoke('long:create', options),
+    duplicate: (id) => ipcRenderer.invoke('long:duplicate', id),
+    remove: (id) => ipcRenderer.invoke('long:remove', id),
+    shortSources: () => ipcRenderer.invoke('long:short-sources'),
+    importMedia: (projectId, kind, paths) => ipcRenderer.invoke('long:import-media', projectId, kind, paths),
+    importImages: (projectId, purpose, paths) => ipcRenderer.invoke('long:import-images', projectId, purpose, paths),
+    importImageFolder: (projectId) => ipcRenderer.invoke('long:import-image-folder', projectId),
+    extractAudio: (projectId, asset) => ipcRenderer.invoke('long:extract-audio', projectId, asset),
+    relink: (projectId, asset) => ipcRenderer.invoke('long:relink', projectId, asset),
+    checkAssets: (project) => ipcRenderer.invoke('long:check-assets', project),
+    onMediaProgress: (callback) => subscribe('long:media-progress', callback),
+    exportVideo: (request) => ipcRenderer.invoke('long:export', request),
+    cancelExport: () => ipcRenderer.invoke('long:export-cancel'),
+    onExportProgress: (callback) => subscribe('long:export-progress', callback),
+    getCreateState: () => ipcRenderer.invoke('long:create-state-get'),
+    setCreateState: (state) => ipcRenderer.invoke('long:create-state-set', state),
+    openProjectFile: () => ipcRenderer.invoke('long:open-project-file'),
+    projectFormat: (id) => ipcRenderer.invoke('long:project-format', id),
+  },
   selectWorkspace: () => ipcRenderer.invoke('workspace:select'),
   getWorkspace: () => ipcRenderer.invoke('workspace:get'),
   createProject: (options) => ipcRenderer.invoke('project:create', options),

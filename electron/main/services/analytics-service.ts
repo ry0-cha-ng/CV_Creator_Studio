@@ -466,6 +466,12 @@ export class AnalyticsService {
   }
 
   /** 書き出し完了時の構成を固定する。同じ exportId が既にあれば変えない。 */
+  /** 横動画の出力版を固定保存する（同じ exportId は上書きしない） */
+  freezeLongExport(snapshot: PublishedSnapshot): PublishedSnapshot {
+    this.ensure();
+    return this.publishedStore().saveIfAbsent(snapshot);
+  }
+
   freezePublishedExport(record: PublishedExportRecord): PublishedSnapshot {
     this.ensure();
     const snapshot = snapshotFromProject({

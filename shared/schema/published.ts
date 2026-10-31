@@ -31,7 +31,12 @@ export const publishedSnapshotSchema = z.object({
   postId: z.string().optional(),
   projectId: z.string().optional(),
   basename: z.string().optional(),
-  lang: z.enum(['ja', 'en']).optional(),
+  lang: z.enum(['ja', 'en', 'ko']).optional(),
+  /** 制作形式。未指定はショート */
+  format: z.enum(['short', 'long']).optional(),
+  /** 横動画：出力設定と、章・定点・演出の解決済み時刻（書き出し時に固定） */
+  output: z.object({ width: z.number(), height: z.number(), fps: z.number() }).optional(),
+  long: z.record(z.string(), z.unknown()).optional(),
   source: z.enum(['export', 'estimate']),
   /** 推定は画面で「推定・要確認」。書き出し時の固定と混ぜない。 */
   needsReview: z.boolean().default(false),
