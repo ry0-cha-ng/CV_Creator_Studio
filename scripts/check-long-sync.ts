@@ -1,4 +1,4 @@
-import { addChapter, addFreeze, addSecondary, assignRange, setSpeed, swapSecondary, updatePlacement } from '../shared/long/commands';
+import { addChapter, addFreeze, addSecondary, assignRange, linkedSecondaryOf, setSpeed, setSyncLinked, swapSecondary, updatePlacement } from '../shared/long/commands';
 import { sequentialIds } from '../shared/long/ids';
 import { buildRenderPlan, type PlanVideoLayer } from '../shared/long/render-plan';
 import { FULL_RECT, type LongProject } from '../shared/long/schema';
@@ -121,6 +121,39 @@ for (const fps of [60, 30] as const) {
   const holdPlan = buildRenderPlan(hold, { language: 'ja', fps: 60 });
   const held = layerOf(holdPlan.layers, 'secondary').pieces.find((item) => gapFrame >= item.from && gapFrame < item.from + item.duration);
   expect(held?.kind === 'freeze', '直前フレーム保持は静止で、ループしない');
+}
+
+// --- 同期リンクの解除：主の速度・フリーズに追従せず、シーン先頭の同期位置から等速
+{
+  const { project, mainId, secondaryId } = setup();
+  const groupId = (project.placements.find((item) => item.id === secondaryId) as { syncGroupId: string }).syncGroupId;
+  expect(linkedSecondaryOf(project, mainId) === secondaryId, '既定はリンク中');
+  const fast = setSpeed(project, mainId, 2);
+  const unlinked = setSyncLinked(fast, groupId, false);
+  expect(linkedSecondaryOf(unlinked, mainId) === undefined, '解除後はリンク中の副視点なし');
+  expectEqual(unlinked.syncGroups.find((item) => item.id === groupId)!.members, fast.syncGroups.find((item) => item.id === groupId)!.members, '解除しても同期点は残る');
+  const plan = buildRenderPlan(unlinked, { language: 'ja', fps: 60 });
+  const main = layerOf(plan.layers, 'main');
+  const secondary = layerOf(plan.layers, 'secondary');
+  expectClose(sourceSecAt(main, 0, 60)!, 10, 1e-9, '解除中：主の先頭は A10.0');
+  expectClose(sourceSecAt(secondary, 0, 60)!, 5.5, 1e-9, '解除中：副の先頭はシーン先頭の同期位置（B5.5）');
+  expectEqual(secondary.pieces[0]!.speed, 1, '解除中：副は等速');
+  expectClose(sourceSecAt(main, 120, 60)!, 14, 1e-9, '解除中：主は2倍速（2秒後に A14.0）');
+  expectClose(sourceSecAt(secondary, 120, 60)!, 7.5, 1e-9, '解除中：副は等速（2秒後に B7.5）');
+  // 主は 2倍速で 5秒。副 B は 15秒あるので全区間表示できる
+  expect(sourceSecAt(secondary, 299, 60) !== null, '解除中：副素材が足りる区間は表示');
+  expect(plan.diagnostics.some((item) => item.code === 'SYNC_UNLINKED' && item.severity === 'warning'), '速度変更ありの解除は警告');
+  // フリーズしても副は止まらない
+  const frozen = setSyncLinked(addFreeze(project, mainId, secToTicks(12), secToTicks(1), ids), groupId, false);
+  const frozenPlan = buildRenderPlan(frozen, { language: 'ja', fps: 60 });
+  const s2 = layerOf(frozenPlan.layers, 'secondary');
+  expect(s2.pieces.every((piece) => piece.kind === 'play'), '解除中：主のフリーズで副は止まらない');
+  expectClose(sourceSecAt(s2, Math.round(2.5 * 60), 60)!, 8.0, 1e-9, '解除中：フリーズ中も副は進む（B8.0）');
+  // 再リンクで元に戻る
+  const relinked = setSyncLinked(unlinked, groupId, true);
+  const back = buildRenderPlan(relinked, { language: 'ja', fps: 60 });
+  expectClose(sourceSecAt(layerOf(back.layers, 'secondary'), 60, 60)!, 7.5, 1e-9, '再リンク後は2倍速でも同期（B7.5）');
+  expect(!back.diagnostics.some((item) => item.code === 'SYNC_UNLINKED'), '再リンク後は解除の警告なし');
 }
 
 // --- 副視点の音声は既定ミュート

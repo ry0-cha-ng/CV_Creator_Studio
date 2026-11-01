@@ -237,7 +237,7 @@ const main = async (): Promise<void> => {
   project = assignRange(s3.project, s3.sceneId, { assetId: 'asset-c', sourceIn: 0, sourceOut: secToTicks(2) }, ids);
   const s4 = more(project, ch2.chapterId, 'action', {}, ids);
   project = assignRange(s4.project, s4.sceneId, { assetId: 'asset-v', sourceIn: secToTicks(3), sourceOut: secToTicks(5) }, ids);
-  project = upsert(project, 'bgm', { id: 'bgm-1', audioTrackId: 'bgm-main', anchor: { kind: 'project', ticks: 0 }, duration: secToTicks(30), offset: 0, gainDb: -14, fadeIn: secToTicks(0.5), fadeOut: secToTicks(1), loop: true });
+  project = upsert(project, 'bgm', { id: 'bgm-1', audioTrackId: 'bgm-main', anchor: { kind: 'project', ticks: 0 }, duration: secToTicks(30), offset: 0, gainDb: -14, fadeIn: secToTicks(0.5), fadeOut: secToTicks(1), loop: true, volumePoints: [] });
   project = upsert(project, 'se', { id: 'se-hl', audioTrackId: 'se-click', anchor: { kind: 'event', markerId: 'mk-hl', offset: 0 }, gainDb: -6 });
   project.avatarBase = { enabled: false, expressionId: 'E01', x: 0.1, y: 0.95, height: 0.28, missing: 'hidden' };
   await fs.writeFile(path.join(root, 'projects', 'long-h0', 'long-project.json'), JSON.stringify(project, null, 2));
