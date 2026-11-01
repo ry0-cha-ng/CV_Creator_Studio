@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState, type DragEvent } from 'react';
 import { assignCandidate, upsert, removeItem } from '../../shared/long/commands';
+import { LONG_IMAGE_EXTENSIONS, LONG_VIDEO_EXTENSIONS, longMediaKindOf, type LongMediaKind } from '../../shared/long/ipc';
 import { CANDIDATE_TAGS, type Candidate, type LongAsset, type LongLineup } from '../../shared/long/schema';
 import { formatTicks, secToTicks } from '../../shared/long/time';
 import { useStudioStore } from '../store';
@@ -14,6 +15,8 @@ import { TAG_CLASS, errorText } from './util';
 type Tab = 'video' | 'candidates' | 'lineups' | 'images' | 'avatars' | 'audio';
 
 export const CANDIDATE_MIME = 'application/x-cvcs-candidate';
+
+const hasFiles = (event: { dataTransfer: DataTransfer | null }): boolean => Boolean(event.dataTransfer?.types.includes('Files'));
 
 /** 素材パネル：録画・候補区間・定点・画像・アバター・音源（W2 左） */
 export const AssetPanel = () => {
@@ -31,7 +34,25 @@ export const AssetPanel = () => {
   const [streams, setStreams] = useState<LongAsset | null>(null);
   const [lineup, setLineup] = useState<LongLineup | 'new' | null>(null);
   const [avatars, setAvatars] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
+  const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
   const transact = useLongStore((state) => state.transact);
+
+  // 素材パネルの外にファイルを落としても、ウィンドウがそのファイルへ移動しないようにする
+  // （各ドロップ先が先に preventDefault した場合はそのまま通す）
+  useEffect(() => {
+    const guard = (event: globalThis.DragEvent): void => {
+      if (!hasFiles(event) || event.defaultPrevented) return;
+      event.preventDefault();
+      if (event.type === 'dragover' && event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, []);
 
   const videos = project.assets.filter((asset) => asset.kind === 'video');
   const images = project.assets.filter((asset) => asset.kind === 'image');
@@ -71,6 +92,71 @@ export const AssetPanel = () => {
     }
   };
 
+  /** エクスプローラからドロップされた複数ファイルを、拡張子で録画・画像に振り分けて1件ずつ取り込む */
+  const importDropped = async (files: File[]): Promise<void> => {
+    if (importing) {
+      useLongStore.getState().setMessage('取り込み中です。完了してから追加してください');
+      return;
+    }
+    const projectId = project.id;
+    const entries = files.map((file) => ({ name: file.name, path: window.studio.getPathForFile(file), kind: longMediaKindOf(file.name) }));
+    const targets = entries.filter((entry): entry is { name: string; path: string; kind: LongMediaKind } => Boolean(entry.kind && entry.path));
+    const skipped = entries.filter((entry) => !entry.kind || !entry.path).map((entry) => entry.name);
+    const formats = `録画 ${LONG_VIDEO_EXTENSIONS.join('・')}／画像 ${LONG_IMAGE_EXTENSIONS.join('・')}`;
+    if (targets.length === 0) {
+      useLongStore.getState().setMessage(`取り込める形式のファイルがありません（${formats}）：${skipped.join('、')}`);
+      return;
+    }
+    const added: LongAsset[] = [];
+    const failed: string[] = [];
+    setImporting({ done: 0, total: targets.length });
+    for (const [index, target] of targets.entries()) {
+      try {
+        const result = await window.studio.long.importMedia(projectId, target.kind, [target.path]);
+        if (result) added.push(...result.assets);
+      } catch (error) {
+        failed.push(`${target.name}（${errorText(error)}）`);
+      }
+      setImporting({ done: index + 1, total: targets.length });
+    }
+    setImporting(null);
+    // 取り込み中に別のプロジェクトへ切り替えた場合は、元のプロジェクトへ反映しない
+    if (useLongStore.getState().project?.id !== projectId) return;
+    if (added.length > 0) {
+      transact('素材の取り込み', (current) => ({ ...current, assets: [...current.assets, ...added] }));
+      setTab(added.some((asset) => asset.kind === 'video') ? 'video' : 'images');
+    }
+    const videoCount = added.filter((asset) => asset.kind === 'video').length;
+    const imageCount = added.length - videoCount;
+    const parts = [
+      added.length > 0 ? `${[videoCount ? `録画 ${videoCount}件` : '', imageCount ? `画像 ${imageCount}件` : ''].filter(Boolean).join('・')}を取り込みました` : '',
+      failed.length > 0 ? `取り込めませんでした：${failed.join('、')}` : '',
+      skipped.length > 0 ? `対応外の形式のため除外：${skipped.join('、')}` : '',
+    ].filter(Boolean);
+    useLongStore.getState().setMessage(parts.join('。'));
+  };
+
+  const onDragOver = (event: DragEvent): void => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    if (!dropActive) setDropActive(true);
+  };
+
+  const onDragLeave = (event: DragEvent): void => {
+    // 子要素の間を移動しただけなら表示を消さない
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    setDropActive(false);
+  };
+
+  const onDrop = (event: DragEvent): void => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    setDropActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length > 0) void importDropped(files);
+  };
+
   const relink = async (asset: LongAsset): Promise<void> => {
     try {
       const result = await window.studio.long.relink(project.id, asset);
@@ -106,11 +192,16 @@ export const AssetPanel = () => {
   const thumbStyle = (asset: LongAsset | undefined) => (asset && asset.kind === 'image' ? { backgroundImage: `url("${encodeURI(`studio-media://root/${asset.path}`)}")` } : undefined);
 
   return (
-    <div className="lv-assets">
+    <div className={`lv-assets ${dropActive ? 'drop' : ''}`} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <div className="lv-ph">
         素材
+        {importing ? (
+          <span className="badge" style={{ fontWeight: 400 }}>
+            取り込み中 {importing.done}/{importing.total}
+          </span>
+        ) : null}
         <span className="sp" />
-        <button type="button" className="sm" onClick={() => void importVideo()}>
+        <button type="button" className="sm" title="エクスプローラから録画・画像をこのパネルへドラッグしても取り込めます（複数可）" onClick={() => void importVideo()}>
           ＋ 録画
         </button>
       </div>
@@ -151,6 +242,8 @@ export const AssetPanel = () => {
           (videos.length === 0 ? (
             <p className="muted" style={{ padding: 10 }}>
               長い録画や切り出し済みの動画を取り込みます。元のファイルは変更しません。
+              <br />
+              エクスプローラから複数のファイルをこのパネルへドラッグ＆ドロップしても取り込めます。
             </p>
           ) : (
             videos.map((asset) => (
@@ -410,6 +503,12 @@ export const AssetPanel = () => {
       {streams ? <AudioStreamsDialog asset={streams} onClose={() => setStreams(null)} /> : null}
       {lineup ? <LineupEditor lineup={lineup === 'new' ? null : lineup} onClose={() => setLineup(null)} /> : null}
       {avatars ? <AvatarManager onClose={() => setAvatars(false)} /> : null}
+      {dropActive ? (
+        <div className="lv-dropzone">
+          <b>ここにドロップして取り込み</b>
+          <span>録画（{LONG_VIDEO_EXTENSIONS.join('・')}）と画像（{LONG_IMAGE_EXTENSIONS.join('・')}）。複数まとめて追加できます</span>
+        </div>
+      ) : null}
     </div>
   );
 };

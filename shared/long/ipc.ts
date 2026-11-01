@@ -50,6 +50,18 @@ export type ShortReuseRequest = {
 
 export type LongMediaKind = 'video' | 'image';
 
+/** 取り込める拡張子（小文字・ドットなし）。ファイル選択とドラッグ＆ドロップで共通 */
+export const LONG_VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm', 'avi'];
+export const LONG_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp'];
+
+/** ファイル名から取り込み種別を判定する。対応外は null */
+export const longMediaKindOf = (fileName: string): LongMediaKind | null => {
+  const extension = /\.([^.\\/]+)$/.exec(fileName)?.[1]?.toLowerCase() ?? '';
+  if (LONG_VIDEO_EXTENSIONS.includes(extension)) return 'video';
+  if (LONG_IMAGE_EXTENSIONS.includes(extension)) return 'image';
+  return null;
+};
+
 export type LongMediaProgress = {
   projectId: string;
   assetId: string;

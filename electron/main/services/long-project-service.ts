@@ -18,6 +18,7 @@ import type {
   ShortReuseRequest,
   ShortReuseSource,
 } from '../../../shared/long/ipc';
+import { LONG_IMAGE_EXTENSIONS, LONG_VIDEO_EXTENSIONS } from '../../../shared/long/ipc';
 import { chapterDuration } from '../../../shared/long/render-plan';
 import {
   LONG_FILE_NAME,
@@ -51,8 +52,8 @@ export const longFfprobe = (): string =>
       : ffprobeStatic.path,
   );
 
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm', 'avi'];
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp'];
+const VIDEO_EXTENSIONS = LONG_VIDEO_EXTENSIONS;
+const IMAGE_EXTENSIONS = LONG_IMAGE_EXTENSIONS;
 
 const safeName = (value: string): string =>
   value.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'file';
