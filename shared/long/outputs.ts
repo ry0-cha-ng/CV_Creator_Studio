@@ -26,6 +26,20 @@ export const longBasename = (input: { date: Date; slug: string; language: LongLa
   return input.part ? `${base}_${safeFileSegment(input.part)}` : base;
 };
 
+/**
+ * 同名を避ける版番号：既存のファイル名に、その版の名前で始まるものがない最小の番号（1〜999）。
+ * 隠しファイル（先頭が「.」の中間ファイル）は数えない。
+ */
+export const nextVersionNumber = (existingNames: Iterable<string>, base: (version: number) => string): number => {
+  const names = [...existingNames].filter((name) => !name.startsWith('.'));
+  for (let version = 1; version < 1000; version += 1) {
+    const prefix = base(version);
+    // v1 と v10 を取り違えないよう、版の直後が区切り（_ または .）か終端のものだけを同じ版とみなす
+    if (!names.some((name) => name === prefix || name.startsWith(`${prefix}.`) || name.startsWith(`${prefix}_`))) return version;
+  }
+  throw new Error('書き出しの版番号が上限に達しました');
+};
+
 const frameTicks = (plan: RenderPlan, frame: number): Ticks => frameToTicks(frame, plan.fps);
 
 // ---------------------------------------------------------------------------

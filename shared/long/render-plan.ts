@@ -341,6 +341,8 @@ export type PlanBgm = {
   fadeIn: number;
   fadeOut: number;
   ducks: PlanDuck[];
+  /** 音量の線（BGM 開始からのフレームと、基準音量からの増減 dB）。空なら増減なし */
+  curve: Array<{ frame: number; db: number }>;
 };
 
 export type PlanSe = { id: string; src: string; from: number; duration: number; gain: number };
@@ -615,6 +617,9 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
   let shown: Interval[] = [];
   let gaps: Interval[] = [];
   let pair: SyncPair | null = null;
+  // リンク中は主の速度・フリーズ・トリムに追従する。解除中は、シーン先頭の同期位置から等速で再生する
+  let secondaryTiming: ResolvedMain = main;
+  let unlinked = false;
   const whole: Interval = { start: 0, end: duration };
   if (secondary) {
     const group = project.syncGroups.find((item) => item.id === secondary.syncGroupId);
@@ -636,7 +641,18 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
     } else {
       const visible = secondary.visible.length > 0 ? intersectIntervals(secondary.visible, [whole]) : [whole];
       const durationB = secondaryAsset.probe?.durationTicks ?? Number.MAX_SAFE_INTEGER;
-      const valid = validLocalIntervals(main.segments, validMainSourceRange(pair, durationB));
+      unlinked = Boolean(group && !group.linked);
+      if (unlinked) {
+        const firstSource = main.segments[0] ? sourceAtLocal(main.segments[0], 0) : placement.sourceIn;
+        const start = secondarySourceAt(firstSource, pair);
+        secondaryTiming = {
+          ...main,
+          segments: [{ kind: 'play', start: 0, end: duration, sourceStart: start, sourceEnd: start + duration, speed: 1 }],
+        };
+      }
+      const valid = unlinked
+        ? validLocalIntervals(secondaryTiming.segments, { start: 0, end: durationB })
+        : validLocalIntervals(main.segments, validMainSourceRange(pair, durationB));
       shown = intersectIntervals(visible, valid);
       gaps = subtractIntervals(visible, valid);
       if (gaps.length > 0) {
@@ -650,6 +666,20 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
               secondary.gapPolicy === 'hold-last' ? '直前のフレームを保持します' : 'その区間は副視点を表示しません'
             }`,
             { suggestedAction: '表示区間・同期点を見直すか、保持方法を選んでください' },
+          ),
+        );
+      }
+      if (unlinked) {
+        const changed = placement.speed !== 1 || placement.freezes.length > 0;
+        ctx.diagnostics.push(
+          diagnostic(
+            'SYNC_UNLINKED',
+            changed ? 'warning' : 'info',
+            { kind: 'placement', id: secondary.id },
+            changed
+              ? '副視点の同期リンクを解除しています。主映像の速度・フリーズは副視点に反映されないため、途中から同じ瞬間ではなくなります'
+              : '副視点の同期リンクを解除しています。副視点はシーン先頭の同期位置から等速で再生します',
+            { suggestedAction: '同じ瞬間を見せる場合は、副視点の設定で「再リンク」してください' },
           ),
         );
       }
@@ -762,11 +792,11 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
   if (secondary && pair) {
     const secondaryAsset = assetById(project, secondary.assetId)!;
     const syncPair = pair;
-    const mapSecondary = (source: Ticks): Ticks => secondarySourceAt(source, syncPair);
+    const mapSecondary = unlinked ? (source: Ticks): Ticks => source : (source: Ticks): Ticks => secondarySourceAt(source, syncPair);
     const pieces: PlanVideoPiece[] = [];
     for (const interval of shown) {
       pieces.push(
-        ...piecesFor(ctx, main, {
+        ...piecesFor(ctx, secondaryTiming, {
           local: interval,
           rect: secondaryLayoutRect,
           crop: secondary.crop,
@@ -782,14 +812,14 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
         const before = shown.filter((item) => item.end <= gap.start);
         if (before.length === 0) continue;
         const last = before[before.length - 1]!;
-        const segment = main.segments.find((item) => last.end > item.start && last.end <= item.end);
+        const segment = secondaryTiming.segments.find((item) => last.end > item.start && last.end <= item.end);
         if (!segment) continue;
         const held = Math.min(
           Math.max(0, durationB - Math.ceil(TICKS_PER_SECOND / ctx.fps)),
           mapSecondary(sourceAtLocal(segment, last.end)),
         );
         pieces.push(
-          ...piecesFor(ctx, main, {
+          ...piecesFor(ctx, secondaryTiming, {
             local: gap,
             rect: secondaryLayoutRect,
             crop: secondary.crop,
@@ -819,7 +849,7 @@ const buildPlacementLayers = (ctx: Ctx, scene: Scene, main: ResolvedMain, placem
       const stream = secondaryAsset.probe?.audioStreams.find((item) => item.audioIndex === use.audioIndex);
       if (!stream?.extractedPath) continue;
       audio.push(
-        ...audioPieces(ctx, main, {
+        ...audioPieces(ctx, secondaryTiming, {
           id: `audio-${secondary.id}-${use.audioIndex}`,
           placementId: secondary.id,
           src: stream.extractedPath,
@@ -958,10 +988,36 @@ export const audioPieceVolume = (piece: PlanAudioPiece, absoluteFrame: number): 
   return gain;
 };
 
-/** BGMの音量（フェード・手動ダッキング込み） */
+/** 音量の点を、時刻順のフレーム・dB に並べる（同じフレームの点は後のものを使う） */
+const curveFrames = (points: ReadonlyArray<{ at: Ticks; db: number }>, fps: number): Array<{ frame: number; db: number }> => {
+  const byFrame = new Map<number, number>();
+  for (const point of [...points].sort((a, b) => a.at - b.at)) byFrame.set(Math.round(ticksToSec(point.at) * fps), point.db);
+  return [...byFrame.entries()].sort((a, b) => a[0] - b[0]).map(([frame, db]) => ({ frame, db }));
+};
+
+/**
+ * 音量の線の倍率。点は dB で持ち、点の間を dB で直線補間してから倍率にする。
+ */
+export const bgmCurveGain = (curve: PlanBgm['curve'], localFrame: number): number => {
+  if (curve.length === 0) return 1;
+  const first = curve[0]!;
+  const last = curve[curve.length - 1]!;
+  if (localFrame <= first.frame) return dbToGain(first.db);
+  if (localFrame >= last.frame) return dbToGain(last.db);
+  for (let index = 1; index < curve.length; index += 1) {
+    const right = curve[index]!;
+    if (localFrame > right.frame) continue;
+    const left = curve[index - 1]!;
+    const ratio = right.frame === left.frame ? 1 : (localFrame - left.frame) / (right.frame - left.frame);
+    return dbToGain(left.db + (right.db - left.db) * ratio);
+  }
+  return dbToGain(last.db);
+};
+
+/** BGMの音量（音量の線・フェード・手動ダッキング込み） */
 export const bgmVolume = (bgm: PlanBgm, absoluteFrame: number): number => {
-  let gain = bgm.gain;
   const local = absoluteFrame - bgm.from;
+  let gain = bgm.gain * bgmCurveGain(bgm.curve ?? [], local);
   if (bgm.fadeIn > 0) gain *= Math.min(1, Math.max(0, local / bgm.fadeIn));
   if (bgm.fadeOut > 0) gain *= Math.min(1, Math.max(0, (bgm.duration - local) / bgm.fadeOut));
   for (const duck of bgm.ducks) {
@@ -1230,6 +1286,7 @@ export const buildRenderPlan = (project: LongProject, options: PlanOptions): Ren
         fadeIn: Math.round(ticksToSec(item.fadeIn) * fps),
         fadeOut: Math.round(ticksToSec(item.fadeOut) * fps),
         ducks,
+        curve: curveFrames(item.volumePoints, fps),
       });
     }
   }

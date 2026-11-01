@@ -10,6 +10,8 @@ import {
   removeLayer,
   setPlacementRange,
   setSpeed,
+  setSyncLinked,
+  linkedSecondaryOf,
   swapSecondary,
   updatePlacement,
   upsert,
@@ -202,7 +204,17 @@ const MainInspector = ({ placement, plan }: { placement: MainPlacement; plan: Re
             ))}
           </span>
         </Field>
-        {secondary ? <p className="dim" style={{ fontSize: 10.5, margin: 0 }}>同期中の副視点にも、同じ速度・フリーズ・トリムを適用します。</p> : null}
+        {secondary ? (
+          linkedSecondaryOf(project, placement.id) ? (
+            <p className="dim" style={{ fontSize: 10.5, margin: 0 }}>
+              同期リンク中 ⛓：副視点にも同じ速度・フリーズ・トリムを適用します。主映像だけを変えるには、副視点の設定でリンクを解除してください。
+            </p>
+          ) : (
+            <p style={{ fontSize: 10.5, margin: 0, color: 'var(--warn)' }}>
+              同期リンク解除中：速度・フリーズは主映像だけに適用され、副視点は等速で再生します。
+            </p>
+          )
+        ) : null}
         <Field label="フリーズ">
           <div>
             {placement.freezes.map((freeze) => (
@@ -458,8 +470,10 @@ const SecondaryInspector = ({ placement, plan }: { placement: Placement & { role
   const frame = useLongStore((state) => state.frame);
   const transact = useLongStore((state) => state.transact);
   const [sync, setSync] = useState(false);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
   const asset = assetById(project, placement.assetId);
   const group = project.syncGroups.find((item) => item.id === placement.syncGroupId);
+  const parent = project.placements.find((item): item is MainPlacement => item.id === placement.parentId && item.role === 'main');
   const mainAt = group?.members.find((member) => member.placementId === placement.parentId)?.syncAt;
   const secondaryAt = group?.members.find((member) => member.placementId === placement.id)?.syncAt;
   const update = (label: string, patch: Partial<Placement>): void => transact(label, (current) => updatePlacement(current, placement.id, patch));
@@ -478,10 +492,21 @@ const SecondaryInspector = ({ placement, plan }: { placement: Placement & { role
             <div className="mono dim" style={{ fontSize: 11 }}>
               主 {mainAt !== undefined ? formatTicks(mainAt) : '—'} ＝ 副 {secondaryAt !== undefined ? formatTicks(secondaryAt) : '—'}
             </div>
-            <div className="row" style={{ marginTop: 3 }}>
+            <div className="row wrap" style={{ marginTop: 3 }}>
               <button type="button" className="sm" onClick={() => setSync(true)}>
                 同期点を開く
               </button>
+              {group ? (
+                group.linked ? (
+                  <button type="button" className="sm" title="主映像の速度・フリーズ・トリムを副視点に反映しないようにします" onClick={() => setConfirmUnlink(true)}>
+                    リンクを解除…
+                  </button>
+                ) : (
+                  <button type="button" className="sm" title="主映像の速度・フリーズ・トリムに再び追従させます" onClick={() => transact('同期リンクの再リンク', (current) => setSyncLinked(current, group.id, true))}>
+                    再リンク ⛓
+                  </button>
+                )
+              ) : null}
               {group ? (
                 <label className="row" style={{ gap: 4 }} title="参考映像・再現など、同じ瞬間ではない映像">
                   <input type="checkbox" checked={group.reference} onChange={(event) => transact('参考映像の指定', (current) => ({ ...current, syncGroups: current.syncGroups.map((item) => (item.id === group.id ? { ...item, reference: event.target.checked } : item)) }))} />
@@ -489,6 +514,39 @@ const SecondaryInspector = ({ placement, plan }: { placement: Placement & { role
                 </label>
               ) : null}
             </div>
+            {group && !group.linked ? (
+              <div className="diag warning" style={{ marginTop: 4 }}>
+                リンク解除中：副視点はシーン先頭の同期位置から等速で再生し、主映像の速度・フリーズ・トリムに追従しません。
+              </div>
+            ) : null}
+            {confirmUnlink && group ? (
+              <div className="card" style={{ marginTop: 6, padding: 8 }}>
+                <b>同期リンクを解除しますか？</b>
+                <ul style={{ margin: '4px 0', paddingLeft: 18, fontSize: 11 }}>
+                  <li>主映像の速度変更・フリーズ・トリムが、副視点に反映されなくなります。</li>
+                  <li>副視点はシーン先頭の同期位置から等速で再生します。途中から主映像と同じ瞬間ではなくなります。</li>
+                  <li>同期点は残ります。「再リンク」でいつでも元に戻せます。</li>
+                </ul>
+                {parent && (parent.speed !== 1 || parent.freezes.length > 0) ? (
+                  <div className="diag warning">この主映像には速度変更またはフリーズがあるため、解除するとすぐに副視点の時刻がずれます。</div>
+                ) : null}
+                <div className="row" style={{ marginTop: 4 }}>
+                  <button type="button" className="sm" onClick={() => setConfirmUnlink(false)}>
+                    やめる
+                  </button>
+                  <button
+                    type="button"
+                    className="sm pri"
+                    onClick={() => {
+                      transact('同期リンクの解除', (current) => setSyncLinked(current, group.id, false));
+                      setConfirmUnlink(false);
+                    }}
+                  >
+                    リンクを解除する
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </Field>
         <Field label="レイアウト">

@@ -236,3 +236,18 @@
 .lv .lv-field > div > .row, .lv .lv-field > div.row { flex-wrap: wrap; }
 .lv input[type="checkbox"], .lv input[type="radio"] { width: auto; padding: 0; margin: 0; flex: none; background: none; border: 0; }
 .lv .lv-field input:not([type="checkbox"]):not([type="radio"]), .lv .lv-field select, .lv .lv-field textarea { max-width: 100%; }
+.lv-curve svg { width: 100%; height: 96px; display: block; background: var(--input); border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; touch-action: none; }
+.lv-curve .grid { stroke: var(--line); stroke-width: 0.5; }
+.lv-curve .zero { stroke: var(--sub); stroke-width: 0.6; stroke-dasharray: 3 2; }
+.lv-curve text { fill: var(--sub); font-size: 7px; }
+.lv-curve .curve { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.lv-curve .fade { fill: rgba(255, 255, 255, 0.05); }
+.lv-curve .head { stroke: #fff; stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0.7; }
+.lv-curve .pt { fill: var(--panel); stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: grab; }
+.lv-curve .pt.on { fill: var(--accent); }
+.lv-srt { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.lv-srt th { text-align: left; color: var(--sub); font-weight: 500; border-bottom: 1px solid var(--line); padding: 4px 6px; position: sticky; top: 0; background: var(--panel); }
+.lv-srt td { border-bottom: 1px solid #1d2229; padding: 4px 6px; vertical-align: top; }
+.lv-srt tbody tr { cursor: pointer; }
+.lv-srt tbody tr:hover { background: #1b2027; }
+.lv-srt tr.skip td { opacity: 0.55; cursor: default; }

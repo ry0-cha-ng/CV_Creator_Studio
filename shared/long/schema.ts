@@ -585,6 +585,11 @@ export const bgmUseSchema = z.object({
   fadeOut: nonNegativeTicks.default(0),
   loop: z.boolean().default(true),
   chapterId: z.string().optional(),
+  /**
+   * 音量の線：BGM の開始からの時刻と、基準音量（gainDb）からの増減 dB。
+   * 点の間は dB で直線補間し、先頭より前・最後より後は端の値を保つ。
+   */
+  volumePoints: z.array(z.object({ at: nonNegativeTicks, db: z.number().min(-60).max(12) })).default([]),
 });
 export type BgmUse = z.infer<typeof bgmUseSchema>;
 

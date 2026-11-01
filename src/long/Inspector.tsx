@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { captionDraft, placeAvatarEvent, updateChapter, upsert } from '../../shared/long/commands';
 import type { Diagnostic } from '../../shared/long/diagnostics';
 import { randomId } from '../../shared/long/ids';
@@ -11,6 +11,7 @@ import { useStudioStore } from '../store';
 import { Field, Section } from './fields';
 import { AudioItemInspector, AvatarEventInspector, CaptionInspector, OverlayInspector, SceneInspector } from './InspectorItems';
 import { PlacementInspector, sourceTicksAt } from './InspectorPlacement';
+import { SrtImportDialog } from './SrtImportDialog';
 import { useLongPlayer } from './player';
 import { useLongStore, type Selection } from './store';
 import { formatMinSec } from './util';
@@ -85,6 +86,7 @@ export const DiagnosticList = ({ plan, diagnostics }: { plan: RenderPlan; diagno
 };
 
 const AddBar = ({ plan }: { plan: RenderPlan }) => {
+  const [srt, setSrt] = useState(false);
   const project = useLongStore((state) => state.project)!;
   const frame = useLongStore((state) => state.frame);
   const transact = useLongStore((state) => state.transact);
@@ -180,6 +182,10 @@ const AddBar = ({ plan }: { plan: RenderPlan }) => {
       <button type="button" className="sm" onClick={addDuck}>
         BGMを下げる
       </button>
+      <button type="button" className="sm" title="SRTファイルから発話字幕・解説、または既存字幕の訳を取り込みます" onClick={() => setSrt(true)}>
+        SRT取り込み
+      </button>
+      {srt ? <SrtImportDialog plan={plan} onClose={() => setSrt(false)} /> : null}
     </div>
   );
 };
@@ -291,6 +297,7 @@ const ChapterTab = ({ plan }: { plan: RenderPlan }) => {
                 fadeIn: secToTicks(1),
                 fadeOut: secToTicks(1),
                 loop: true,
+                volumePoints: [],
                 chapterId: chapter.id,
               }),
             );
@@ -436,6 +443,10 @@ export const Inspector = ({ plan }: { plan: RenderPlan }) => {
   const project = useLongStore((state) => state.project)!;
   const selection = useLongStore((state) => state.selection);
   const [tab, setTab] = useState<Tab>('selected');
+  // 「音源」「章」タブの「設定」や確認の「該当箇所へ」で選んだら、その設定が見える「選択中」タブへ移る
+  useEffect(() => {
+    if (selection.kind !== 'none') setTab('selected');
+  }, [selection]);
   const errorCount = plan.diagnostics.filter((item) => item.severity === 'error').length;
   const warnCount = plan.diagnostics.filter((item) => item.severity === 'warning').length;
   const entityDiagnostics = plan.diagnostics.filter((item) => 'id' in selection && item.entity.id === selection.id);
@@ -461,7 +472,7 @@ export const Inspector = ({ plan }: { plan: RenderPlan }) => {
       case 'bgm':
       case 'se':
       case 'ducking':
-        return <AudioItemInspector kind={selection.kind} id={selection.id} />;
+        return <AudioItemInspector kind={selection.kind} id={selection.id} plan={plan} />;
       case 'chapter':
         return <ChapterTab plan={plan} />;
       default:

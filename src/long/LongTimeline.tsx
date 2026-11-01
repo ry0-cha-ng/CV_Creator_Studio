@@ -407,7 +407,13 @@ export const LongTimeline = ({ plan }: { plan: RenderPlan }) => {
               a,
               b,
               layer.role === 'zoom' ? 'zm' : 'v2',
-              layer.role === 'zoom' ? '⧉ 拡大小窓' : '⛓ PiP 副視点',
+              layer.role === 'zoom'
+                ? '⧉ 拡大小窓'
+                : (() => {
+                    const placement = project.placements.find((item) => item.id === layer.placementId);
+                    const group = placement?.role === 'secondary' ? project.syncGroups.find((item) => item.id === placement.syncGroupId) : undefined;
+                    return group && !group.linked ? 'PiP 副視点（リンク解除・等速）' : '⛓ PiP 副視点';
+                  })(),
               () => select({ kind: 'placement', id: layer.placementId }),
               isSel('placement', layer.placementId),
             );
@@ -444,7 +450,7 @@ export const LongTimeline = ({ plan }: { plan: RenderPlan }) => {
             if (placement?.role !== 'main') return null;
             const candidate = project.candidates.find((item) => item.id === placement.candidateId);
             const asset = project.assets.find((item) => item.id === placement.assetId);
-            const linked = project.syncGroups.some((group) => group.members.some((member) => member.placementId === placement.id));
+            const group = project.syncGroups.find((item) => item.members.some((member) => member.placementId === placement.id));
             return block(
               `main-${scene.id}`,
               scene.from,
@@ -454,7 +460,7 @@ export const LongTimeline = ({ plan }: { plan: RenderPlan }) => {
                 {candidate?.name ?? asset?.name ?? '素材'}
                 {placement.speed !== 1 ? <span className="badge" style={{ marginLeft: 3 }}>{placement.speed}x</span> : null}
                 {placement.freezes.length > 0 ? <span className="badge" style={{ marginLeft: 3 }}>❄{placement.freezes.length}</span> : null}
-                {linked ? <span className="badge" style={{ marginLeft: 3 }}>⛓</span> : null}
+                {group ? <span className="badge" style={{ marginLeft: 3, color: group.linked ? undefined : 'var(--warn)' }} title={group.linked ? '同期リンク中' : '同期リンク解除中'}>{group.linked ? '⛓' : '⛓ 解除'}</span> : null}
               </>,
               () => select({ kind: 'placement', id: placement.id }),
               isSel('placement', placement.id),

@@ -200,3 +200,38 @@ export const compareProbe = (
   if (Math.abs(before.fps - after.fps) > 0.01) changes.push(`fps ${before.fps} → ${after.fps}`);
   return { same: changes.length === 0, changes };
 };
+
+/**
+ * 波形（同期点合わせ用）。指定区間だけを 8kHz モノラルで読み、区間を buckets 個に分けた振幅の最大値（0〜1）を返す。
+ * 長い録画でも全体は読まない。区間が素材の外なら 0 で埋める。
+ */
+export const waveformPeaks = async (
+  ffmpeg: string,
+  absolutePath: string,
+  fromSec: number,
+  durationSec: number,
+  buckets: number,
+): Promise<number[]> => {
+  const count = Math.max(1, Math.min(4000, Math.floor(buckets)));
+  const sampleRate = 8000;
+  const start = Math.max(0, fromSec);
+  const lead = start - fromSec; // 素材の先頭より前の部分（無音として扱う）
+  const length = Math.max(0, durationSec - lead);
+  const peaks = new Array<number>(count).fill(0);
+  if (length <= 0) return peaks;
+  const { stdout } = await execFileAsync(
+    ffmpeg,
+    ['-hide_banner', '-loglevel', 'error', '-ss', start.toFixed(3), '-t', length.toFixed(3), '-i', absolutePath, '-map', '0:a:0', '-ac', '1', '-ar', String(sampleRate), '-f', 'f32le', '-'],
+    { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+  );
+  const samples = new Float32Array(stdout.buffer, stdout.byteOffset, Math.floor(stdout.byteLength / 4));
+  const perBucket = (durationSec * sampleRate) / count;
+  const offset = Math.round(lead * sampleRate);
+  for (let index = 0; index < samples.length; index += 1) {
+    const bucket = Math.floor((index + offset) / perBucket);
+    if (bucket >= count) break;
+    const value = Math.abs(samples[index]!);
+    if (value > peaks[bucket]!) peaks[bucket] = value;
+  }
+  return peaks.map((value) => Math.min(1, value));
+};

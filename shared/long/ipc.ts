@@ -94,11 +94,29 @@ export type LongExportRequest = {
   captionMode: 'burn' | 'srt';
   withoutBgm: boolean;
   thumbnail?: { kind: 'frame'; frame: number } | { kind: 'image'; path: string };
+  /** 前回失敗した書き出しを、完了した段階の成果物を使って続きから再開する（内容・設定が同じときだけ） */
+  resume?: boolean;
+};
+
+export type LongExportPhase = 'prepare' | 'bundle' | 'render' | 'audio' | 'nobgm' | 'finalize' | 'outputs' | 'thumbnail' | 'done' | 'cancelled' | 'error';
+
+export const LONG_EXPORT_PHASE_LABEL: Record<LongExportPhase, string> = {
+  prepare: '準備',
+  bundle: '描画の準備',
+  render: '映像と音声の描画',
+  audio: '音声の描画',
+  nobgm: 'BGMなし版の作成',
+  finalize: '音量の調整と合成',
+  outputs: 'SRT・投稿文・meta の出力',
+  thumbnail: 'サムネイルの作成',
+  done: '完了',
+  cancelled: 'キャンセル',
+  error: 'エラー',
 };
 
 export type LongExportProgress = {
   language: LongLanguage;
-  phase: 'prepare' | 'bundle' | 'render' | 'audio' | 'nobgm' | 'finalize' | 'outputs' | 'thumbnail' | 'done' | 'cancelled' | 'error';
+  phase: LongExportPhase;
   ratio: number;
   remainingSec?: number;
   message?: string;
@@ -112,9 +130,30 @@ export type LongExportJobResult = {
   outputDir: string;
   durationTicks: number;
   partial: boolean;
+  /** 前回の書き出しで完了済み（再開時に再利用した。記録は前回済み） */
+  reused?: boolean;
 };
 
-export type LongExportResult = { jobs: LongExportJobResult[]; diagnostics: Diagnostic[] };
+export type LongExportFailure = {
+  language: LongLanguage;
+  phase: LongExportPhase;
+  message: string;
+  /** 完了した段階・言語があり、続きから再開できる */
+  resumable: boolean;
+  /** 完了済みの段階（表示用） */
+  completed: LongExportPhase[];
+};
+
+export type LongExportResult = {
+  jobs: LongExportJobResult[];
+  diagnostics: Diagnostic[];
+  /** 途中で失敗した（キャンセルは例外で返す） */
+  failure?: LongExportFailure;
+  /** 再開を指定したが内容・設定が変わっていたため、最初から書き出した */
+  restarted?: boolean;
+  /** 再開して、前回の成果物を使った段階 */
+  reusedPhases?: LongExportPhase[];
+};
 
 export type CreateModeState = {
   createMode: 'short' | 'long';
@@ -135,6 +174,8 @@ export interface LongStudioApi {
   importImages(projectId: string, purpose: 'avatar' | 'cutin' | 'still', paths?: string[]): Promise<LongImageImport | null>;
   importImageFolder(projectId: string): Promise<LongImageImport | null>;
   extractAudio(projectId: string, asset: LongAsset): Promise<LongAsset>;
+  /** 保存先フォルダ内の音声ファイルの、from から duration（ticks）の区間の波形（0〜1 を buckets 個） */
+  waveform(relativePath: string, from: number, duration: number, buckets: number): Promise<number[]>;
   relink(projectId: string, asset: LongAsset): Promise<RelinkResult | null>;
   checkAssets(project: LongProject): Promise<string[]>;
   onMediaProgress(callback: (progress: LongMediaProgress) => void): () => void;

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { hasErrors, sortDiagnostics } from '../../shared/long/diagnostics';
-import type { LongExportResult } from '../../shared/long/ipc';
+import { LONG_EXPORT_PHASE_LABEL, type LongExportFailure, type LongExportResult } from '../../shared/long/ipc';
 import { buildChapters, LONG_LANGUAGE_LABEL, longBasename } from '../../shared/long/outputs';
 import { buildRenderPlan, type RenderPlan } from '../../shared/long/render-plan';
 import type { LongLanguage } from '../../shared/long/schema';
@@ -9,6 +9,9 @@ import { useStudioStore } from '../store';
 import { DiagnosticList } from './Inspector';
 import { saveLongNow, useLongStore } from './store';
 import { errorText, formatClock, tracksMap } from './util';
+
+/** 直前の失敗（ダイアログを閉じても、同じ Project なら続きから再試行できるように残す） */
+let lastFailure: { projectId: string; failure: LongExportFailure } | null = null;
 
 /** W8：書き出し。開始時の Project を固定し、その後の編集は次回の書き出しに反映される */
 export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () => void }) => {
@@ -30,6 +33,8 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<LongExportResult | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [stageFailure, setStageFailure] = useState<LongExportFailure | null>(lastFailure?.projectId === project.id ? lastFailure.failure : null);
+  const [notice, setNotice] = useState<string | null>(null);
   const tracks = useMemo(() => tracksMap(audioTracks), [audioTracks]);
 
   // 言語ごとの確認（書き出し時と同じ描画計画）
@@ -60,9 +65,11 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
   const partial = range !== 'all';
   const previewName = longBasename({ date: new Date(), slug: project.slug || project.title, language: languages[0] ?? 'ja', version: 1, part: partial ? 'part' : undefined });
 
-  const start = async (): Promise<void> => {
+  const start = async (resume = false): Promise<void> => {
     setRunning(true);
     setFailure(null);
+    setStageFailure(null);
+    setNotice(null);
     setResult(null);
     try {
       await saveLongNow();
@@ -80,18 +87,27 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
         captionMode,
         withoutBgm,
         thumbnail: thumbnail && (thumbnail.kind === 'frame' || thumbnail.path) ? thumbnail : undefined,
+        resume,
       });
       setResult(response);
-      if (response.jobs.length > 0) {
+      lastFailure = response.failure ? { projectId: project.id, failure: response.failure } : null;
+      setStageFailure(response.failure ?? null);
+      if (response.restarted) setNotice('前回の失敗から内容または設定が変わっていたため、最初から書き出しました');
+      else if (resume && response.reusedPhases && response.reusedPhases.length > 0) {
+        setNotice(`前回の成果物を使って続きから再開しました（${response.reusedPhases.map((phase) => (phase === 'done' ? '完了済みの言語' : LONG_EXPORT_PHASE_LABEL[phase])).join('・')}）`);
+      }
+      // 再開で再利用した言語は前回記録済みなので、新しく書き出した分だけ記録する
+      const recorded = response.jobs.filter((job) => !job.reused);
+      if (recorded.length > 0) {
         // 書き出した版を記録（公開版の詳細はDBに固定保存済み。後の編集で上書きしない）
         useLongStore.getState().transact('書き出しの記録', (current) => ({
           ...current,
-          status: !partial && current.status === 'editing' ? 'exported' : current.status,
+          status: !partial && !response.failure && current.status === 'editing' ? 'exported' : current.status,
           output: { ...current.output, fps, captionMode, withoutBgm },
           editor: { ...current.editor, guideStep: Math.max(current.editor.guideStep, 8) },
           exports: [
             ...current.exports,
-            ...response.jobs.map((job) => ({
+            ...recorded.map((job) => ({
               exportId: job.exportId,
               at: new Date().toISOString(),
               language: job.language,
@@ -264,7 +280,7 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
                   <b>{LONG_LANGUAGE_LABEL[progress.language]}</b>
                   <span className="sp" />
                   <span className="muted">
-                    {progress.phase} {Math.round(progress.ratio * 100)}%{progress.remainingSec ? ` · 残り約${Math.ceil(progress.remainingSec / 60)}分` : ''}
+                    {LONG_EXPORT_PHASE_LABEL[progress.phase]} {Math.round(progress.ratio * 100)}%{progress.remainingSec ? ` · 残り約${Math.ceil(progress.remainingSec / 60)}分` : ''}
                   </span>
                 </div>
                 <div style={{ height: 6, background: 'var(--line2)', borderRadius: 3, overflow: 'hidden', marginTop: 4 }}>
@@ -273,10 +289,35 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
                 <div className="dim" style={{ fontSize: 10.5, marginTop: 4 }}>開始時の内容で書き出しています。この間の編集は次回の書き出しに反映されます。</div>
               </div>
             ) : null}
-            {failure ? <div className="diag error">{failure}（もう一度書き出すと最初からやり直します）</div> : null}
+            {failure ? <div className="diag error">{failure}</div> : null}
+            {notice ? <div className="diag info">{notice}</div> : null}
+            {stageFailure && !running ? (
+              <div className="diag error" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                <b>
+                  {LONG_LANGUAGE_LABEL[stageFailure.language]}の「{LONG_EXPORT_PHASE_LABEL[stageFailure.phase]}」で失敗しました
+                </b>
+                <div>{stageFailure.message}</div>
+                {stageFailure.completed.length > 0 ? (
+                  <div style={{ opacity: 0.85 }}>完了済み：{stageFailure.completed.map((phase) => LONG_EXPORT_PHASE_LABEL[phase]).join('・')}</div>
+                ) : null}
+                <div className="row" style={{ marginTop: 4 }}>
+                  {stageFailure.resumable ? (
+                    <button type="button" className="sm pri" disabled={blocked} onClick={() => void start(true)} title="完了した段階・言語の成果物を使い、失敗した段階から再開します（内容・設定を変えた場合は最初から）">
+                      続きから再試行
+                    </button>
+                  ) : null}
+                  <button type="button" className="sm" disabled={blocked} onClick={() => void start(false)}>
+                    最初からやり直す
+                  </button>
+                </div>
+                {stageFailure.resumable ? (
+                  <div className="dim" style={{ fontSize: 10.5 }}>内容や出力設定を変えると、続きからではなく最初から書き出します。</div>
+                ) : null}
+              </div>
+            ) : null}
             {result && result.jobs.length > 0 ? (
               <div className="diag info" style={{ flexDirection: 'column' }}>
-                <b>書き出しました</b>
+                <b>{result.failure ? '書き出しが終わった言語' : '書き出しました'}</b>
                 {result.jobs.map((job) => (
                   <div key={job.exportId}>
                     {LONG_LANGUAGE_LABEL[job.language]}：{job.files.length} ファイル{' '}
@@ -287,7 +328,7 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
                 ))}
               </div>
             ) : null}
-            {result && result.jobs.length === 0 ? <div className="diag error">エラーを解決してから書き出してください</div> : null}
+            {result && result.jobs.length === 0 && !result.failure ? <div className="diag error">エラーを解決してから書き出してください</div> : null}
           </div>
         </div>
         <div className="df">
@@ -303,7 +344,7 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
               閉じる
             </button>
           )}
-          <button type="button" className="pri" disabled={blocked || running} onClick={() => void start()}>
+          <button type="button" className="pri" disabled={blocked || running} onClick={() => void start(false)}>
             {running ? '書き出し中…' : blocked ? `書き出す（エラー ${diagnostics.filter((item) => item.severity === 'error').length} を解決）` : partial ? '部分書き出し' : '書き出す'}
           </button>
         </div>

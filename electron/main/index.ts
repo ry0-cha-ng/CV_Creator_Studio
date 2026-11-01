@@ -199,6 +199,9 @@ const registerLongIpc = (): void => {
   ipcMain.handle('long:extract-audio', (_event, projectId: string, asset) => longProjectService.extractAudio(projectId, asset));
   ipcMain.handle('long:relink', (_event, projectId: string, asset) => longProjectService.relink(projectId, asset));
   ipcMain.handle('long:check-assets', (_event, project) => longProjectService.checkAssets(project));
+  ipcMain.handle('long:waveform', (_event, relativePath: string, from: number, duration: number, buckets: number) =>
+    longProjectService.waveform(String(relativePath), Number(from), Number(duration), Number(buckets)),
+  );
   ipcMain.handle('long:export', (event, request) => longExportService.export(request, event.sender));
   ipcMain.handle('long:export-cancel', () => longExportService.cancel());
   ipcMain.handle('long:create-state-get', async () => {

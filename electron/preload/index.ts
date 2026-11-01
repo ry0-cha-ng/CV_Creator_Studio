@@ -26,6 +26,7 @@ const api: StudioApi = {
     importImages: (projectId, purpose, paths) => ipcRenderer.invoke('long:import-images', projectId, purpose, paths),
     importImageFolder: (projectId) => ipcRenderer.invoke('long:import-image-folder', projectId),
     extractAudio: (projectId, asset) => ipcRenderer.invoke('long:extract-audio', projectId, asset),
+    waveform: (relativePath, from, duration, buckets) => ipcRenderer.invoke('long:waveform', relativePath, from, duration, buckets),
     relink: (projectId, asset) => ipcRenderer.invoke('long:relink', projectId, asset),
     checkAssets: (project) => ipcRenderer.invoke('long:check-assets', project),
     onMediaProgress: (callback) => subscribe('long:media-progress', callback),

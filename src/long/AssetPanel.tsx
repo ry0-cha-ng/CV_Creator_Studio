@@ -434,6 +434,7 @@ export const AssetPanel = () => {
                           fadeIn: secToTicks(1),
                           fadeOut: secToTicks(2),
                           loop: true,
+                          volumePoints: [],
                         }),
                       )
                     }

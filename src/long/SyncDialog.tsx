@@ -1,15 +1,127 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RenderPlan } from '../../shared/long/render-plan';
-import { assetById, type MainPlacement } from '../../shared/long/schema';
+import { assetById, type AudioStreamInfo, type LongAsset, type MainPlacement } from '../../shared/long/schema';
 import { secondarySourceAt } from '../../shared/long/sync';
 import { formatTicks, secToTicks, ticksToSec } from '../../shared/long/time';
 import { TimeInput } from './CandidateEditor';
 import { useLongStore } from './store';
-import { studioUrl } from './util';
+import { errorText, studioUrl } from './util';
+
+const WAVE_HALF = secToTicks(2);
+const WAVE_BUCKETS = 400;
+
+/** 波形に使う音声：ゲーム音 → 混合 → 副視点 → それ以外の順（使わないものは除く） */
+export const waveformStream = (asset: LongAsset | undefined): AudioStreamInfo | undefined => {
+  const streams = (asset?.probe?.audioStreams ?? []).filter((stream) => stream.extractedPath && stream.role !== 'unused');
+  const order = ['game', 'mixed', 'secondary', 'voice'];
+  const rank = (role: string | undefined): number => {
+    const index = order.indexOf(role ?? '');
+    return index < 0 ? order.length : index;
+  };
+  return [...streams].sort((a, b) => rank(a.role) - rank(b.role) || a.audioIndex - b.audioIndex)[0];
+};
+
+/**
+ * 再生位置の前後2秒の波形。中央の線が表示中のフレーム、黄色の線が同期点。
+ * クリックでその位置へ移動する。投擲音・着弾音などの立ち上がりを両方で揃える目安にする。
+ */
+const Waveform = ({
+  asset,
+  ticks,
+  syncAt,
+  duration,
+  onChange,
+}: {
+  asset: LongAsset | undefined;
+  ticks: number;
+  syncAt: number;
+  duration: number;
+  onChange: (ticks: number) => void;
+}) => {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const stream = waveformStream(asset);
+  const [peaks, setPeaks] = useState<{ from: number; values: number[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // 表示位置が動いたら、少し待ってから読み直す（フレーム送りの連打で ffmpeg を何度も起動しない）
+  useEffect(() => {
+    if (!stream?.extractedPath) return;
+    const from = ticks - WAVE_HALF;
+    const timer = setTimeout(() => {
+      window.studio.long
+        .waveform(stream.extractedPath!, from - stream.startOffset, WAVE_HALF * 2, WAVE_BUCKETS)
+        .then((values) => {
+          setPeaks({ from, values });
+          setError(null);
+        })
+        .catch((reason: unknown) => setError(errorText(reason)));
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [stream?.extractedPath, stream?.startOffset, ticks]);
+  useEffect(() => {
+    const element = canvas.current;
+    const context = element?.getContext('2d');
+    if (!element || !context) return;
+    const width = element.width;
+    const height = element.height;
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#0b0e12';
+    context.fillRect(0, 0, width, height);
+    const from = ticks - WAVE_HALF;
+    const x = (at: number): number => ((at - from) / (WAVE_HALF * 2)) * width;
+    // 素材の外
+    context.fillStyle = 'rgba(255,255,255,0.06)';
+    if (from < 0) context.fillRect(0, 0, x(0), height);
+    if (from + WAVE_HALF * 2 > duration) context.fillRect(x(duration), 0, width - x(duration), height);
+    // 同期点・現在位置は波形の下に描く（音の立ち上がりが線に隠れないように）
+    if (syncAt >= from && syncAt <= from + WAVE_HALF * 2) {
+      context.fillStyle = 'rgba(255, 211, 77, 0.8)';
+      context.fillRect(x(syncAt) - 1, 0, 2, height);
+    }
+    context.fillStyle = 'rgba(255, 70, 85, 0.85)';
+    context.fillRect(width / 2 - 1, 0, 2, height);
+    if (peaks) {
+      // 読み込み済みの波形を、今の表示位置に合わせてずらして描く
+      const shift = ((peaks.from - from) / (WAVE_HALF * 2)) * width;
+      const max = Math.max(0.05, ...peaks.values);
+      context.fillStyle = '#7cc4ff';
+      const bar = width / peaks.values.length;
+      peaks.values.forEach((value, index) => {
+        const h = Math.max(1, (value / max) * (height - 4));
+        context.fillRect(shift + index * bar, (height - h) / 2, Math.max(1, bar - 0.5), h);
+      });
+    }
+  }, [peaks, ticks, syncAt, duration]);
+  if (!stream) return <div className="dim" style={{ fontSize: 11, padding: '4px 0' }}>音声がないため波形を表示できません</div>;
+  return (
+    <div>
+      <canvas
+        ref={canvas}
+        width={800}
+        height={56}
+        style={{ width: '100%', height: 56, display: 'block', cursor: 'pointer', borderRadius: 3 }}
+        title="クリックでその位置へ移動"
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          const at = ticks - WAVE_HALF + Math.round(((event.clientX - box.left) / box.width) * WAVE_HALF * 2);
+          onChange(Math.max(0, Math.min(duration, at)));
+        }}
+      />
+      <div className="row dim" style={{ fontSize: 10.5 }}>
+        <span>−2秒</span>
+        <span className="sp" />
+        <span>波形：{stream.title || `音声 ${stream.audioIndex + 1}`}{error ? `（読み込めません：${error}）` : ''}</span>
+        <span className="sp" />
+        <span>+2秒</span>
+      </div>
+    </div>
+  );
+};
 
 const Viewer = ({
   title,
   path,
+  asset,
+  syncAt,
   ticks,
   fps,
   onChange,
@@ -17,6 +129,8 @@ const Viewer = ({
 }: {
   title: string;
   path: string;
+  asset: LongAsset | undefined;
+  syncAt: number;
   ticks: number;
   fps: number;
   duration: number;
@@ -34,6 +148,7 @@ const Viewer = ({
         <span className="dim mono">{fps ? `${Math.round(fps * 100) / 100}fps` : ''}</span>
       </div>
       <video ref={ref} src={studioUrl(path)} muted preload="auto" style={{ width: '100%', aspectRatio: '16/9', background: '#000' }} />
+      <Waveform asset={asset} ticks={ticks} syncAt={syncAt} duration={duration} onChange={onChange} />
       <input type="range" min={0} max={duration} step={500} value={ticks} onChange={(event) => onChange(Number(event.target.value))} style={{ width: '100%' }} />
       <div className="row">
         <button type="button" className="sm" onClick={() => step(-10)}>
@@ -102,8 +217,8 @@ export const SyncDialog = ({
         </div>
         <div className="db">
           <div className="grid2" style={{ gap: 14 }}>
-            <Viewer title={`A 主：${mainAsset.name}`} path={mainAsset.proxyPath ?? mainAsset.path} ticks={viewA} fps={mainAsset.probe?.fps ?? 60} duration={mainAsset.probe?.durationTicks ?? secToTicks(600)} onChange={setViewA} />
-            <Viewer title={`B 副：${secondaryAsset.name}`} path={secondaryAsset.proxyPath ?? secondaryAsset.path} ticks={viewB} fps={secondaryAsset.probe?.fps ?? 60} duration={durationB} onChange={setViewB} />
+            <Viewer title={`A 主：${mainAsset.name}`} path={mainAsset.proxyPath ?? mainAsset.path} asset={mainAsset} syncAt={mainAt} ticks={viewA} fps={mainAsset.probe?.fps ?? 60} duration={mainAsset.probe?.durationTicks ?? secToTicks(600)} onChange={setViewA} />
+            <Viewer title={`B 副：${secondaryAsset.name}`} path={secondaryAsset.proxyPath ?? secondaryAsset.path} asset={secondaryAsset} syncAt={secondaryAt} ticks={viewB} fps={secondaryAsset.probe?.fps ?? 60} duration={durationB} onChange={setViewB} />
           </div>
           <div className="row" style={{ marginTop: 8 }}>
             <button

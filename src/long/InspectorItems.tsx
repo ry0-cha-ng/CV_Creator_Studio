@@ -24,13 +24,14 @@ import {
   type ScenePurpose,
 } from '../../shared/long/schema';
 import { SCENE_PURPOSE_LABEL } from '../../shared/long/templates';
-import { formatTicks, secToTicks } from '../../shared/long/time';
+import { formatTicks, frameToTicks, secToTicks } from '../../shared/long/time';
 import { useStudioStore } from '../store';
 import { MOTION_LABEL } from './AvatarManager';
 import { TimeInput } from './CandidateEditor';
 import { Field, NumberInput, Section, Seg } from './fields';
 import { useLongPlayer } from './player';
 import { useLongStore } from './store';
+import { VolumeCurveEditor } from './VolumeCurveEditor';
 
 const LANGUAGE_LABEL: Record<LongLanguage, string> = { ja: '日本語', en: 'English', ko: '한국어' };
 
@@ -454,7 +455,9 @@ export const SceneInspector = ({ sceneId }: { sceneId: string }) => {
   );
 };
 
-export const AudioItemInspector = ({ kind, id }: { kind: 'bgm' | 'se' | 'ducking'; id: string }) => {
+export const AudioItemInspector = ({ kind, id, plan }: { kind: 'bgm' | 'se' | 'ducking'; id: string; plan: RenderPlan }) => {
+  const frame = useLongStore((state) => state.frame);
+  const player = useLongPlayer();
   const project = useLongStore((state) => state.project)!;
   const transact = useLongStore((state) => state.transact);
   const tracks = useStudioStore((state) => state.audioTracks);
@@ -501,6 +504,22 @@ export const AudioItemInspector = ({ kind, id }: { kind: 'bgm' | 'se' | 'ducking
           <input type="checkbox" checked={item.loop} onChange={(event) => save('ループ', { loop: event.target.checked })} />
           曲が短いときはループする
         </label>
+        <div style={{ margin: '8px 0' }}>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>
+            音量の線（基準音量からの増減）
+          </div>
+          {(() => {
+            const planned = plan.bgm.find((entry) => entry.id === item.id);
+            const playhead = planned ? frameToTicks(frame - planned.from, plan.fps) : undefined;
+            return (
+              <VolumeCurveEditor
+                item={item}
+                playhead={playhead}
+                onSeek={planned ? (at) => player.seek(planned.from + Math.round((at / 120_000) * plan.fps)) : undefined}
+              />
+            );
+          })()}
+        </div>
         <button type="button" className="sm ghost danger" onClick={() => { transact('BGMの削除', (current) => removeItem(current, 'bgm', id)); useLongStore.getState().select({ kind: 'none' }); }}>
           削除
         </button>

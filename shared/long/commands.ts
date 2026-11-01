@@ -850,6 +850,27 @@ export const setSyncPoints = (
     }
   });
 
+/**
+ * 同期リンクの解除・再リンク。同期点は残す。
+ * 解除中の副視点は、主の速度・フリーズ・トリムに追従せず、シーン先頭の同期位置から等速で再生する。
+ */
+export const setSyncLinked = (project: LongProject, groupId: string, linked: boolean): LongProject =>
+  mutate(project, (draft) => {
+    const group = draft.syncGroups.find((item) => item.id === groupId);
+    if (!group) throw new Error('同期グループが見つかりません');
+    group.linked = linked;
+  });
+
+/** 主配置にリンク中の副視点があるか（片側だけの変更がグループ全体に及ぶことを示すため） */
+export const linkedSecondaryOf = (project: LongProject, mainPlacementId: string): string | undefined => {
+  for (const placement of project.placements) {
+    if (placement.role !== 'secondary' || placement.parentId !== mainPlacementId) continue;
+    const group = project.syncGroups.find((item) => item.id === placement.syncGroupId);
+    if (group?.linked) return placement.id;
+  }
+  return undefined;
+};
+
 /** 主副の交換：表示枠の役割だけを交換する（素材・同期点・切り抜き・音声は変えない） */
 export const swapSecondary = (project: LongProject, secondaryId: string): LongProject =>
   mutate(project, (draft) => {

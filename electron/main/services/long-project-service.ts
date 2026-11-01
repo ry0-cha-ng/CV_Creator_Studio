@@ -32,7 +32,7 @@ import {
 import { createLongProject, slugify } from '../../../shared/long/templates';
 import { secToTicks } from '../../../shared/long/time';
 import type { Project } from '../../../shared/schema/project';
-import { compareProbe, createLongProxy, extractAudioStream, fileStamp, probeLongMedia } from './long-media';
+import { compareProbe, createLongProxy, extractAudioStream, fileStamp, probeLongMedia, waveformPeaks } from './long-media';
 import type { ProjectService } from './project-service';
 
 const unpacked = (binary: string): string => (app.isPackaged ? binary.replace('app.asar', 'app.asar.unpacked') : binary);
@@ -292,6 +292,12 @@ export class LongProjectService {
     const info = await fs.stat(source);
     await fs.utimes(destination, info.atime, info.mtime).catch(() => undefined);
     return destination;
+  }
+
+  /** 同期点合わせ用の波形（保存先フォルダ内の音声ファイルの一部区間） */
+  async waveform(relativePath: string, fromTicks: number, durationTicks: number, buckets: number): Promise<number[]> {
+    if (![fromTicks, durationTicks, buckets].every(Number.isFinite) || durationTicks <= 0) throw new Error('波形の範囲が不正です');
+    return waveformPeaks(longFfmpeg(), this.resolve(relativePath), fromTicks / 120_000, Math.min(60, durationTicks / 120_000), buckets);
   }
 
   /** 音声ストリームを個別のファイルへ抽出する（プレビューと書き出しで同じファイルを使う） */
