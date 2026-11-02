@@ -106,7 +106,7 @@ export const ReviewHome = () => {
               )}
               <div>
                 <div className="an-chips">
-                  <span className="an-chip">{platformLabel(post.platform)}</span>
+                  <span className="an-chip">{platformLabel(post.platform, post.contentType)}</span>
                   <span className="an-chip">{langLabel(post.lang)}</span>
                   <span className="an-chip is-good">{elapsed(post.postedAt)}</span>
                 </div>
@@ -347,7 +347,7 @@ const StepMetrics = ({
     <div>
       {post.platform === 'youtube' && post.youtubeVideoId && <ApiWindowHint postId={post.id} />}
       <div className="an-row">
-        <strong>{platformLabel(post.platform)}</strong>
+        <strong>{platformLabel(post.platform, post.contentType)}</strong>
         <span className="an-muted">取得日</span>
         <input className="an-date" type="date" aria-label="取得日" value={capturedAt} onChange={(event) => setCapturedAt(event.target.value)} />
       </div>
@@ -649,7 +649,7 @@ export const PostPanel = ({
           <div className="an-title" style={{ fontSize: 14, fontWeight: 700 }}>
             {post.content.map} / {post.content.agent} / {post.content.site} サイト{post.content.side}
           </div>
-          <div className="an-muted">{platformLabel(post.platform)} · {langLabel(post.lang)}</div>
+          <div className="an-muted">{platformLabel(post.platform, post.contentType)} · {langLabel(post.lang)}</div>
           <div className="an-muted">{stamp(post.postedAt)} 投稿 · {elapsed(post.postedAt)}</div>
           <button type="button" className="an-text-btn" disabled={!post.url} onClick={() => post.url && window.open(post.url, '_blank', 'noopener')}>動画を開く</button>
           {post.projectId ? (

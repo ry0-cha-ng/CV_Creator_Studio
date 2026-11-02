@@ -490,6 +490,21 @@ export class PublishingService {
     return scheduled[0] ?? null;
   }
 
+  /** 横動画の投稿運用から使う（短尺と同じ表に、Project ID ごとに保存する） */
+  readBundle(projectId: string): PublishingBundle | null {
+    if (!this.database) this.initialize();
+    return this.read(projectId);
+  }
+
+  saveBundle(bundle: PublishingBundle): void {
+    this.save(bundle);
+  }
+
+  /** 登録済みの投稿URL（分析の Post から。短尺・横動画の両方） */
+  takenAll(): TakenPostUrl[] {
+    return this.takenUrls().filter((item) => item.url.trim());
+  }
+
   private syncBundle(project: Project): PublishingBundle | null {
     if (!this.database) this.initialize();
     if (!this.database) return null;

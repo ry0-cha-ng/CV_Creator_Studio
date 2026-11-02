@@ -7,6 +7,7 @@ import type { LongProject } from '../../shared/long/schema';
 import { CHAPTER_ROLE_LABEL, CONTENT_KIND_LABEL, SCENE_PURPOSE_LABEL, SHOW_ORDER_LABEL } from '../../shared/long/templates';
 import { AssetPanel } from './AssetPanel';
 import { ExportDialog } from './ExportDialog';
+import { LongPublishDialog } from './LongPublishDialog';
 import { DiagnosticList, Inspector } from './Inspector';
 import { CaptionInspector } from './InspectorItems';
 import { PlacementInspector } from './InspectorPlacement';
@@ -233,6 +234,7 @@ export const LongGuide = ({ active }: { active: boolean }) => {
   const dirty = useLongStore((state) => isDirty(state));
   const { plan } = useLongPlan();
   const [exporting, setExporting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   if (!plan) return null;
   const states = stepStates(project, plan);
   const step = project.editor.guideStep;
@@ -330,10 +332,15 @@ export const LongGuide = ({ active }: { active: boolean }) => {
       default:
         return (
           <div>
-            <button type="button" className="pri" onClick={() => setExporting(true)}>
-              書き出し画面を開く
-            </button>
-            <p className="muted">投稿文・チャプター草案は「投稿」タブで確認・編集できます。API に接続していなくても、書き出したMP4と投稿文で手動投稿できます。</p>
+            <div className="row">
+              <button type="button" className="pri" onClick={() => setExporting(true)}>
+                書き出し画面を開く
+              </button>
+              <button type="button" disabled={project.exports.length === 0} title={project.exports.length === 0 ? '書き出した後に投稿できます' : undefined} onClick={() => setPublishing(true)}>
+                投稿を進める（YouTube 通常動画）
+              </button>
+            </div>
+            <p className="muted">投稿文・チャプター草案は「投稿」タブで確認・編集できます。YouTube に接続していなくても、書き出したMP4と投稿文で手動投稿し、URL を記録できます。</p>
             <div className="card" style={{ padding: 0, height: 480, display: 'flex', flexDirection: 'column' }}>
               <Inspector plan={plan} />
             </div>
@@ -429,7 +436,17 @@ export const LongGuide = ({ active }: { active: boolean }) => {
           </button>
         </div>
       </div>
-      {exporting ? <ExportDialog plan={plan} onClose={() => setExporting(false)} /> : null}
+      {exporting ? (
+        <ExportDialog
+          plan={plan}
+          onClose={() => setExporting(false)}
+          onPublish={() => {
+            setExporting(false);
+            setPublishing(true);
+          }}
+        />
+      ) : null}
+      {publishing ? <LongPublishDialog onClose={() => setPublishing(false)} /> : null}
     </LongPlayerContext.Provider>
   );
 };

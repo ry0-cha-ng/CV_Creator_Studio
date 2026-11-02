@@ -251,3 +251,17 @@
 .lv-srt tbody tr { cursor: pointer; }
 .lv-srt tbody tr:hover { background: #1b2027; }
 .lv-srt tr.skip td { opacity: 0.55; cursor: default; }
+.lv-pub-steps { display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.lv-pub-step { display: flex; gap: 8px; align-items: center; text-align: left; border: 0; background: transparent; padding: 7px 8px; border-radius: 4px; color: var(--sub); }
+.lv-pub-step.on { background: var(--sel); color: var(--text); }
+.lv-pub-step .mark { width: 14px; text-align: center; font-weight: 700; }
+.lv-pub-step.done .mark { color: #4cc38a; }
+.lv-pub-step.needs-fix .mark { color: var(--warn); }
+.lv-pub-step.ready .mark, .lv-pub-step.in-progress .mark { color: var(--accent); }
+.lv-pub-sec { border-top: 1px solid var(--line); padding: 8px 0; }
+.lv-pub-sec h4 { margin: 0 0 6px; font-size: 12px; display: flex; align-items: center; }
+.lv-pub-check { display: flex; gap: 6px; align-items: flex-start; margin: 3px 0; font-size: 12px; }
+.lv-pub-checks .diag b { display: block; }
+.lv-pub-qa { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 12px; border-bottom: 1px solid #1d2229; }
+.lv-pub-pre { flex: 1; margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font-size: 11px; background: var(--input); padding: 6px; border-radius: 4px; }
+.lv-pub-label { width: 64px; flex: none; white-space: nowrap; }

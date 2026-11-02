@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const deliveryPresetIdSchema = z.enum(['yt-global', 'tt-jp', 'x-jp', 'yt-ja', 'tt-en']);
+export const deliveryPresetIdSchema = z.enum(['yt-global', 'tt-jp', 'x-jp', 'yt-ja', 'tt-en', 'yt-long-ja', 'yt-long-en', 'yt-long-ko']);
 export type DeliveryPresetId = z.infer<typeof deliveryPresetIdSchema>;
 
 export const experimentPhaseSchema = z.enum(['p1', 'p2', 'p3']);
@@ -30,7 +30,11 @@ export type DeliveryPreset = {
   outputs: Array<'video' | 'card' | 'thumbnail' | 'xCard' | 'txt'>;
   defaultOn: boolean;
   utmSource: 'youtube' | 'tiktok' | 'x';
-  utmMedium: 'short' | 'card';
+  utmMedium: 'short' | 'card' | 'long';
+  /** 横動画（YouTube 通常動画）。短尺のプリセット一覧（DELIVERY_PRESET_ORDER）には含めない */
+  format?: 'long';
+  /** 横動画の言語（videoLanguage は短尺の 'ja' | 'en' だけを表すため別に持つ） */
+  longLanguage?: CopyLanguage;
 };
 
 export const CTA_TEXT = {
@@ -45,6 +49,26 @@ export const CLUTCHVAULT_ORIGIN = {
 
 /** 最初の9定点（18本）は施策を分けない。動画の識別は utm_content に置く。 */
 export const FIRST_9_LINEUPS_CAMPAIGN = 'first_9_lineups';
+
+/** 横動画（YouTube 通常動画）の言語別プリセット。書き出す言語は横動画モードの設定で決まる */
+const longPreset = (id: DeliveryPresetId, language: CopyLanguage, label: string): DeliveryPreset => ({
+  id,
+  label: `YouTube 横動画（${label}）`,
+  detail: `${label}の横動画（通常動画）。MP4・SRT・投稿文・チャプター草案・16:9サムネイル`,
+  platform: 'youtube',
+  videoLanguage: null,
+  copyLanguages: [language],
+  outputs: ['video', 'thumbnail', 'txt'],
+  defaultOn: false,
+  utmSource: 'youtube',
+  utmMedium: 'long',
+  format: 'long',
+  longLanguage: language,
+});
+
+export const LONG_DELIVERY_PRESET_ORDER: DeliveryPresetId[] = ['yt-long-ja', 'yt-long-en', 'yt-long-ko'];
+
+export const isLongPreset = (id: string | undefined): boolean => Boolean(id && id.startsWith('yt-long-'));
 
 export const DELIVERY_PRESETS: Record<DeliveryPresetId, DeliveryPreset> = {
   'yt-global': {
@@ -95,6 +119,9 @@ export const DELIVERY_PRESETS: Record<DeliveryPresetId, DeliveryPreset> = {
     utmSource: 'youtube',
     utmMedium: 'short',
   },
+  'yt-long-ja': longPreset('yt-long-ja', 'ja', '日本語'),
+  'yt-long-en': longPreset('yt-long-en', 'en', '英語'),
+  'yt-long-ko': longPreset('yt-long-ko', 'ko', '韓国語'),
   'tt-en': {
     id: 'tt-en',
     label: 'TikTok（英語）',

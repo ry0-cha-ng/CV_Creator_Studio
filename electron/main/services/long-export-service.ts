@@ -12,8 +12,9 @@ import type {
   LongExportRequest,
   LongExportResult,
 } from '../../../shared/long/ipc';
-import { buildChapters, buildLongMeta, buildPostText, buildSrt, longBasename, nextVersionNumber, type CreditTrack } from '../../../shared/long/outputs';
+import { buildChapters, buildLongDescription, buildLongMeta, buildPostText, buildSrt, longBasename, longPostTitle, nextVersionNumber, type CreditTrack } from '../../../shared/long/outputs';
 import { buildRenderPlan, type AudioTrackRef, type RenderPlan } from '../../../shared/long/render-plan';
+import { longContentStamp } from '../../../shared/long/publishing';
 import { parseLongProject, type LongLanguage, type LongProject } from '../../../shared/long/schema';
 import { frameToTicks, ticksToSec } from '../../../shared/long/time';
 import type { PublishedSnapshot } from '../../../shared/schema/published';
@@ -452,6 +453,11 @@ export class LongExportService {
           chapters,
           loudness,
           assetStamps: job.stamps,
+          youtube: {
+            title: longPostTitle(snapshot, language),
+            description: buildLongDescription(snapshot, language, chapters, credits),
+            tags: snapshot.publishing.tags.map((tag) => tag.replace(/^#/, '')).filter(Boolean),
+          },
         });
         const metaPath = path.join(outputDir, `${basename}.meta.json`);
         await fs.writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
@@ -467,7 +473,16 @@ export class LongExportService {
         await removeQuietly(job.videoRaw, job.wav, job.noBgmWav);
         current = null;
         const durationTicks = frameToTicks(range ? range.to - range.from : plan.durationInFrames, plan.fps);
-        jobs.push({ language, exportId: job.exportId, basename, files: files.map((file) => path.relative(workspace, file).split(path.sep).join('/')), outputDir, durationTicks, partial: Boolean(range) });
+        jobs.push({
+          language,
+          exportId: job.exportId,
+          basename,
+          files: files.map((file) => path.relative(workspace, file).split(path.sep).join('/')),
+          outputDir,
+          durationTicks,
+          partial: Boolean(range),
+          contentStamp: longContentStamp(snapshot),
+        });
         this.emit(sender, { language, phase: 'done', ratio: 1 });
       }
       return { jobs, diagnostics, restarted, reusedPhases: [...reusedPhases] };

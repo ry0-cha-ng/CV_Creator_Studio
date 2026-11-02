@@ -20,6 +20,8 @@ import { aiProviderChoiceSchema } from '../../shared/ai';
 import { catalogRootFromApp, resolveCatalogMediaFile } from './services/catalog-path';
 import { ExportService } from './services/export-service';
 import { LongExportService } from './services/long-export-service';
+import { LongPublishingService } from './services/long-publishing-service';
+import { isLongPreset } from '../../shared/delivery-presets';
 import { LongProjectService } from './services/long-project-service';
 import { LibraryService } from './services/library-service';
 import { MediaService } from './services/media-service';
@@ -103,6 +105,14 @@ const youtubePublishingService = new YoutubePublishingService({
   onProgress: (progress) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send('youtube-publish:progress', progress);
   },
+  // 横動画（YouTube 通常動画）。呼び出し時に横動画のサービスを参照する
+  long: {
+    isLong: async (projectId) => (await longProjectService.projectFormat(projectId)).format === 'long',
+    service: {
+      draftSource: (projectId, preset) => longPublishingService.draftSource(projectId, preset),
+      applyYoutubePublication: (projectId, taskId, input) => longPublishingService.applyYoutubePublication(projectId, taskId, input),
+    },
+  },
 });
 let competitorService: CompetitorService;
 const competitorApi = createCompetitorApi({
@@ -177,7 +187,29 @@ const longExportService = new LongExportService(
   },
 );
 
+const longPublishingService = new LongPublishingService({
+  publishing: publishingService,
+  analytics: analyticsService,
+  loadProject: (id) => longProjectService.load(id),
+  workspace: () => projectService.getWorkspace(),
+  getTrack: (id) => libraryService.getAudio(id),
+});
+
 const registerLongIpc = (): void => {
+  ipcMain.handle('long:publishing-get', (_event, projectId: string) => longPublishingService.view(String(projectId)));
+  ipcMain.handle('long:publishing-start', (_event, projectId: string) => longPublishingService.start(String(projectId)));
+  ipcMain.handle('long:publishing-patch', (_event, projectId: string, taskId: string, body) =>
+    longPublishingService.patch(String(projectId), String(taskId), body ?? {}),
+  );
+  ipcMain.handle('long:publishing-complete', (_event, projectId: string, taskId: string, body) =>
+    longPublishingService.complete(String(projectId), String(taskId), body ?? {}),
+  );
+  ipcMain.handle('long:publishing-skip', (_event, projectId: string, taskId: string, reason?: string) =>
+    longPublishingService.skip(String(projectId), String(taskId), typeof reason === 'string' ? reason : undefined),
+  );
+  ipcMain.handle('long:publishing-needs-fix', (_event, projectId: string, taskId: string) =>
+    longPublishingService.needsFix(String(projectId), String(taskId)),
+  );
   ipcMain.handle('long:list', () => longProjectService.list());
   ipcMain.handle('long:load', (_event, id: string) => longProjectService.load(id));
   ipcMain.handle('long:save', (_event, project) => longProjectService.save(project));
@@ -490,7 +522,7 @@ const registerIpc = (): void => {
     analyticsService.saveSnapshot(input.postId, input.ageBucket, input.capturedAt, input.values);
     if (input.ageBucket === '7d') {
       const post = analyticsService.bundle().posts.find((item) => item.id === input.postId);
-      if (post?.projectId) {
+      if (post?.projectId && !isLongPreset(post.preset)) {
         const project = await projectService.loadProject(post.projectId);
         const log = project.posts.find((item) => item.preset === post.preset);
         if (log) {

@@ -14,7 +14,7 @@ import { errorText, formatClock, tracksMap } from './util';
 let lastFailure: { projectId: string; failure: LongExportFailure } | null = null;
 
 /** W8：書き出し。開始時の Project を固定し、その後の編集は次回の書き出しに反映される */
-export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () => void }) => {
+export const ExportDialog = ({ plan, onClose, onPublish }: { plan: RenderPlan; onClose: () => void; onPublish?: () => void }) => {
   const project = useLongStore((state) => state.project)!;
   const frame = useLongStore((state) => state.frame);
   const progress = useLongStore((state) => state.exportProgress);
@@ -116,6 +116,8 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
               files: job.files,
               basename: job.basename,
               durationTicks: job.durationTicks,
+              // 書き出した内容の識別値（書き出し処理が、書き出した Project から計算したもの）
+              contentStamp: job.contentStamp,
             })),
           ],
         }));
@@ -318,6 +320,11 @@ export const ExportDialog = ({ plan, onClose }: { plan: RenderPlan; onClose: () 
             {result && result.jobs.length > 0 ? (
               <div className="diag info" style={{ flexDirection: 'column' }}>
                 <b>{result.failure ? '書き出しが終わった言語' : '書き出しました'}</b>
+                {!result.failure && !partial && onPublish ? (
+                  <button type="button" className="sm pri" style={{ alignSelf: 'flex-start' }} onClick={onPublish}>
+                    投稿へ進む
+                  </button>
+                ) : null}
                 {result.jobs.map((job) => (
                   <div key={job.exportId}>
                     {LONG_LANGUAGE_LABEL[job.language]}：{job.files.length} ファイル{' '}

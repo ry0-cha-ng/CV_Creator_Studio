@@ -3,7 +3,6 @@ import type { YoutubePlaylistOption, YoutubePublishJob, YoutubePublishMetadata, 
 import { DEFAULT_PUBLISH_TIMEZONE } from '../../shared/schema/youtube-publish';
 import { utcToZonedLocal, zonedLocalToUtc } from '../../shared/youtube-publish';
 import type { DeliveryPresetId } from '../../shared/delivery-presets';
-import type { Project } from '../../shared/schema/project';
 import type { PublishingView } from '../../shared/publishing';
 
 const ipcMessage = (error: unknown): string =>
@@ -53,12 +52,17 @@ export const YoutubePublishPanel = ({
   preset,
   reviewing,
   onView,
+  refresh,
 }: {
-  project: Project;
+  /** 短尺は Project、横動画は ID だけを渡す */
+  project: { id: string };
   taskId: string;
   preset: DeliveryPresetId;
   reviewing: boolean;
-  onView: (next: PublishingView) => void;
+  /** 短尺：投稿運用の表示を更新する */
+  onView?: (next: PublishingView) => void;
+  /** 横動画：投稿運用の表示を更新する（指定すると短尺の更新は使わない） */
+  refresh?: () => Promise<void>;
 }) => {
   const [pub, setPub] = useState<YoutubePublishView | null>(null);
   const [error, setError] = useState('');
@@ -79,8 +83,18 @@ export const YoutubePublishPanel = ({
   const tail = useRef(Promise.resolve());
   const busyCount = useRef(0);
   const onViewRef = useRef(onView);
+  const refreshRef = useRef(refresh);
   pubRef.current = pub;
   onViewRef.current = onView;
+  refreshRef.current = refresh;
+  const refreshWorkflow = async (): Promise<void> => {
+    if (refreshRef.current) {
+      await refreshRef.current();
+      return;
+    }
+    const refreshed = await window.studio.getPublishing(project.id);
+    onViewRef.current?.(refreshed);
+  };
 
   const begin = () => {
     busyCount.current += 1;
@@ -190,8 +204,7 @@ export const YoutubePublishPanel = ({
         });
         if (metaRef.current === snapshot) dirtyRef.current = false;
         remember(next, true);
-        const refreshed = await window.studio.getPublishing(project.id);
-        onViewRef.current(refreshed);
+        await refreshWorkflow();
       } catch (reason) {
         setError(ipcMessage(reason));
       } finally {
@@ -222,8 +235,7 @@ export const YoutubePublishPanel = ({
       await tail.current;
       const next = await task();
       remember(next, dirtyRef.current);
-      const refreshed = await window.studio.getPublishing(project.id);
-      onViewRef.current(refreshed);
+      await refreshWorkflow();
     } catch (reason) {
       setError(ipcMessage(reason));
     } finally {
@@ -389,6 +401,7 @@ export const YoutubePublishPanel = ({
             />
             子ども向け
           </label>
+          {job.metadata.contentKind !== 'video' && (
           <label>
             Shorts関連動画
             <select
@@ -400,7 +413,8 @@ export const YoutubePublishPanel = ({
               <option value="set">Studioで設定する</option>
             </select>
           </label>
-          {job.metadata.relatedVideosMode === 'set' && (
+          )}
+          {job.metadata.contentKind !== 'video' && job.metadata.relatedVideosMode === 'set' && (
             <label>
               関連動画のURL / ID（コピー用）
               <textarea

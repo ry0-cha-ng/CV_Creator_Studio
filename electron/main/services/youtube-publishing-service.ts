@@ -9,8 +9,11 @@ import type { Project } from '../../../shared/schema/project';
 import type { AnalyticsPost } from '../../../shared/schema/analytics';
 import { thumbnailLayoutOf } from '../../../shared/thumbnail-focus';
 import {
+  DEFAULT_CATEGORY_ID,
   DEFAULT_PUBLISH_TIMEZONE,
+  GAME_TITLE_MEMO,
   MAX_UPLOAD_RETRIES,
+  youtubePublishMetadataSchema,
   bindVideoInputSchema,
   publicationChangeInputSchema,
   studioConfirmInputSchema,
@@ -48,6 +51,7 @@ import {
   youtubePublicUrl,
 } from '../../../shared/youtube-publish';
 import type { AnalyticsService } from './analytics-service';
+import type { LongDraftSource, LongPublishingService } from './long-publishing-service';
 import type { PublishingService } from './publishing-service';
 import { YoutubeApi, type ApiVideo } from './youtube-api';
 import type { YoutubeAuth, SecretBox } from './youtube-auth';
@@ -139,6 +143,11 @@ export class YoutubePublishingService {
       workspace: () => string | null;
       openExternal: (url: string) => Promise<void>;
       onProgress: (progress: YoutubePublishProgress) => void;
+      /** 横動画（YouTube 通常動画）。Project が横動画のときだけ使い、短尺の処理は変えない */
+      long?: {
+        isLong: (projectId: string) => Promise<boolean>;
+        service: Pick<LongPublishingService, 'draftSource' | 'applyYoutubePublication'>;
+      };
       fetch?: typeof fetch;
       now?: () => Date;
       random?: () => number;
@@ -179,7 +188,39 @@ export class YoutubePublishingService {
     await this.writeSessions(sessions);
   }
 
+  private async isLong(projectId: string): Promise<boolean> {
+    return Boolean(this.deps.long && (await this.deps.long.isLong(projectId)));
+  }
+
+  /** 横動画の既定のメタデータ。投稿先ごとに保存した設定からは、再生リストなどの共通設定だけを引き継ぐ */
+  private longMetadata(source: LongDraftSource, saved?: Partial<YoutubePublishMetadata>): YoutubePublishMetadata {
+    return youtubePublishMetadataSchema.parse({
+      title: stripInternalMarkup(source.copy.title),
+      description: source.copy.description,
+      tags: source.copy.tags,
+      categoryId: saved?.categoryId || DEFAULT_CATEGORY_ID,
+      defaultLanguage: source.language,
+      selfDeclaredMadeForKids: saved?.selfDeclaredMadeForKids ?? false,
+      containsSyntheticMedia: saved?.containsSyntheticMedia ?? false,
+      hasPaidProductPlacement: false,
+      playlistIds: saved?.playlistIds ?? [],
+      thumbnailPath: source.thumbnailPath,
+      gameTitleMemo: GAME_TITLE_MEMO,
+      relatedVideosMode: 'unused',
+      relatedVideoRefs: [],
+      contentKind: 'video',
+    });
+  }
+
   private async readyMetadata(job: YoutubePublishJob): Promise<YoutubePublishMetadata> {
+    if (await this.isLong(job.projectId)) {
+      const source = await this.deps.long!.service.draftSource(job.projectId, job.preset);
+      const metadata = { ...healPublishMetadata(job.metadata, this.longMetadata(source)), contentKind: 'video' as const };
+      if (!stripInternalMarkup(metadata.title)) {
+        throw new YoutubeError('unknown', 'タイトルが空です。タイトルを入れてからYouTubeへ送ってください');
+      }
+      return metadata;
+    }
     const project = await this.deps.loadProject(job.projectId);
     const fromProject = metadataFromProject(project, job.preset);
     const thumb = publishFiles(project).find((file) => file.preset === job.preset && file.kind === 'thumbnail');
@@ -295,11 +336,13 @@ export class YoutubePublishingService {
     const body = youtubePublishDraftInputSchema.parse(input);
     const metadataPatch = providedMetadataPatch(rawMetadataOf(input), body.metadata);
     const channel = await this.requireChannel();
-    const project = await this.deps.loadProject(body.projectId);
     const existing = this.deps.publishStore.jobForTask(body.taskId);
     if (existing && existing.operationState !== 'draft') {
       return this.view(body.projectId, body.taskId);
     }
+    // 横動画は短尺の Project を読まずに、横動画の書き出し記録から作る
+    if (await this.isLong(body.projectId)) return this.createLongDraft(body, metadataPatch, channel.channelId, existing);
+    const project = await this.deps.loadProject(body.projectId);
     const videoPath = this.resolveVideoPath(project, body.preset);
     const stat = await fs.stat(videoPath);
     const presetMeta = this.deps.publishStore.presetForDelivery(body.preset)?.metadata;
@@ -331,6 +374,50 @@ export class YoutubePublishingService {
         contentStamp: project.guide.lastExport?.contentStamp,
       },
       metadata: { ...metadata, thumbnailPath: thumb?.relativePath },
+      desiredPublishAt: body.desiredPublishAt,
+      timezone: body.timezone ?? DEFAULT_PUBLISH_TIMEZONE,
+      operationState: 'draft',
+      publicationState: 'not_uploaded',
+      studioChecks: defaultStudioChecks(metadata),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    this.deps.publishStore.saveJob(job);
+    return this.view(body.projectId, body.taskId);
+  }
+
+  /** 横動画の下書き：その言語の最新の書き出し（exportId）と、チャプター込みの説明欄で作る */
+  private async createLongDraft(
+    body: ReturnType<typeof youtubePublishDraftInputSchema.parse>,
+    metadataPatch: Partial<YoutubePublishMetadata> | undefined,
+    channelId: string,
+    existing: YoutubePublishJob | undefined,
+  ): Promise<YoutubePublishView> {
+    const source = await this.deps.long!.service.draftSource(body.projectId, body.preset);
+    const stat = await fs.stat(source.videoPath);
+    const saved = this.deps.publishStore.presetForDelivery(body.preset)?.metadata;
+    const metadata = { ...this.longMetadata(source, saved), ...metadataPatch, contentKind: 'video' as const };
+    const now = this.now().toISOString();
+    const job = youtubePublishJobSchema.parse({
+      id: existing?.id ?? randomUUID(),
+      revision: existing ? existing.revision + 1 : 0,
+      workflowTaskId: body.taskId,
+      projectId: body.projectId,
+      exportId: source.exportId,
+      channelId,
+      preset: body.preset,
+      contentType: 'VIDEO_ON_DEMAND',
+      contentTypeSource: 'production',
+      file: { path: source.videoPath, size: stat.size, mtimeMs: stat.mtimeMs, sha256: existing?.file.sha256 ?? '' },
+      exportRef: {
+        exportId: source.exportId,
+        projectId: body.projectId,
+        preset: body.preset,
+        basename: source.basename,
+        frozenAt: now,
+        contentStamp: source.contentStamp,
+      },
+      metadata,
       desiredPublishAt: body.desiredPublishAt,
       timezone: body.timezone ?? DEFAULT_PUBLISH_TIMEZONE,
       operationState: 'draft',
@@ -421,17 +508,34 @@ export class YoutubePublishingService {
     if (job.operationState === 'outcome_unknown') {
       throw new YoutubeError('unknown', '結果が不明です。Studioで動画の有無を確認し、動画IDを紐付けるまで新しい動画は作りません');
     }
-    const project = await this.deps.loadProject(job.projectId);
-    const videoPath = this.resolveVideoPath(project, job.preset);
+    let videoPath: string;
+    let thumbnailPath: string | undefined;
+    let basename: string;
+    let exportId: string;
+    let contentStamp: string | undefined;
+    if (await this.isLong(job.projectId)) {
+      // 横動画：その言語の最新の書き出しで送り直す
+      const source = await this.deps.long!.service.draftSource(job.projectId, job.preset);
+      videoPath = source.videoPath;
+      thumbnailPath = source.thumbnailPath;
+      basename = source.basename;
+      exportId = source.exportId;
+      contentStamp = source.contentStamp;
+    } else {
+      const project = await this.deps.loadProject(job.projectId);
+      videoPath = this.resolveVideoPath(project, job.preset);
+      const fileStat = await fs.stat(videoPath);
+      thumbnailPath = publishFiles(project).find((file) => file.preset === job.preset && file.kind === 'thumbnail')?.relativePath;
+      basename = guessBasename(project, job.preset);
+      exportId = `${project.id}:${job.preset}:${basename}:${fileStat.size}:${fileStat.mtimeMs}`;
+      contentStamp = project.guide.lastExport?.contentStamp;
+    }
     const stat = await fs.stat(videoPath);
-    const thumb = publishFiles(project).find((file) => file.preset === job.preset && file.kind === 'thumbnail');
     const metadata = await this.readyMetadata({
       ...job,
-      metadata: { ...job.metadata, thumbnailPath: thumb?.relativePath ?? job.metadata.thumbnailPath },
+      metadata: { ...job.metadata, thumbnailPath: thumbnailPath ?? job.metadata.thumbnailPath },
     });
     const now = this.now().toISOString();
-    const basename = guessBasename(project, job.preset);
-    const exportId = `${project.id}:${job.preset}:${basename}:${stat.size}:${stat.mtimeMs}`;
     await this.setSession(job.id, undefined);
     const reset = this.bump(job, {
       exportId,
@@ -441,7 +545,7 @@ export class YoutubePublishingService {
         exportId,
         basename,
         frozenAt: now,
-        contentStamp: project.guide.lastExport?.contentStamp,
+        contentStamp,
       },
       metadata,
       youtubeVideoId: undefined,
@@ -892,8 +996,49 @@ export class YoutubePublishingService {
     this.bump(job, { steps: [...job.steps.filter((step) => step.step !== 'playlist'), ...steps.filter((step) => step.step === 'playlist')] });
   }
 
+  /** 横動画：Post（分析）と投稿ワークフローへ反映する。横動画の Project ファイルは書き換えない */
+  private async syncLongPublication(job: YoutubePublishJob, action?: PublicationChangeInput['action']): Promise<void> {
+    const url = youtubePublicUrl(job.youtubeVideoId!, 'video');
+    const keep = action === 'private' || action === 'unlisted';
+    const scheduled = action === 'schedule' || action === 'reschedule' || job.publicationState === 'scheduled';
+    const isPublic = job.publicationState === 'public';
+    const advance = action === 'schedule' || action === 'reschedule' || action === 'cancelSchedule' || keep || isPublic;
+    const current = job.publicationState === 'not_uploaded' || job.publicationState === 'unknown' || job.publicationState === 'unavailable' ? 'private' : job.publicationState;
+    const publicationState = advance
+      ? isPublic
+        ? 'public'
+        : action === 'unlisted' || job.publicationState === 'unlisted'
+          ? 'unlisted'
+          : scheduled && job.publicationState === 'scheduled'
+            ? 'scheduled'
+            : 'private'
+      : current;
+    const post = await this.deps.long!.service.applyYoutubePublication(job.projectId, job.workflowTaskId!, {
+      url,
+      videoId: job.youtubeVideoId!,
+      exportRef: { exportId: job.exportRef.exportId, basename: job.exportRef.basename, sha256: job.file.sha256, frozenAt: job.exportRef.frozenAt },
+      publicationState,
+      postedAt: isPublic ? job.actualPublishedAt : undefined,
+      scheduledPublishAt: job.scheduledPublishAt,
+      timezone: job.timezone,
+      uploadedAt: job.uploadedAt,
+      actualPublishedAt: job.actualPublishedAt,
+      publishedAtSource: job.publishedAtSource,
+      firstObservedPublicAt: job.firstObservedPublicAt,
+      publicationConfirmedAt: job.publicationConfirmedAt,
+      everPublished: job.everPublished,
+      keepWithoutPublic: keep && !isPublic,
+      advance,
+    });
+    this.bump(job, { postId: post.id });
+  }
+
   private async syncAnalyticsAndWorkflow(job: YoutubePublishJob, action?: PublicationChangeInput['action']): Promise<void> {
     if (!job.youtubeVideoId || !job.workflowTaskId) return;
+    if (await this.isLong(job.projectId)) {
+      await this.syncLongPublication(job, action);
+      return;
+    }
     const project = await this.deps.loadProject(job.projectId);
     const kind = job.metadata.contentKind === 'shorts' ? 'shorts' : job.metadata.contentKind === 'video' ? 'video' : 'unknown';
     const url = youtubePublicUrl(job.youtubeVideoId, kind);

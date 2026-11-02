@@ -648,6 +648,8 @@ export const longExportRecordSchema = z.object({
   files: z.array(z.string()).default([]),
   basename: z.string(),
   durationTicks: nonNegativeTicks,
+  /** 書き出し時の内容の識別値（投稿前確認で「書き出しが最新か」を判定する） */
+  contentStamp: z.string().optional(),
 });
 export type LongExportRecord = z.infer<typeof longExportRecordSchema>;
 

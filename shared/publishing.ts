@@ -58,7 +58,7 @@ export const workflowTaskSchema = z.object({
   type: workflowTaskTypeSchema,
   platform: z.enum(['youtube', 'tiktok', 'x']).optional(),
   preset: z.string().optional(),
-  lang: z.enum(['ja', 'en']).optional(),
+  lang: z.enum(['ja', 'en', 'ko']).optional(),
   status: workflowTaskStatusSchema,
   required: z.boolean(),
   dependsOnTaskIds: z.array(z.string()).default([]),
@@ -266,7 +266,7 @@ const checklistFor = (taskId: string, type: WorkflowTaskType, preset?: DeliveryP
   return [];
 };
 
-const settled = (status: WorkflowTaskStatus): boolean => status === 'done' || status === 'skipped';
+export const settled = (status: WorkflowTaskStatus): boolean => status === 'done' || status === 'skipped';
 
 export const taskTitle = (task: WorkflowTask): string => {
   if (task.type === 'pre-publish-check') return '投稿前確認';
@@ -356,7 +356,7 @@ const chainDependencies = (tasks: WorkflowTask[]): WorkflowTask[] => {
   });
 };
 
-const stampBundle = (bundle: PublishingBundle, now: string): PublishingBundle => {
+export const stampBundle = (bundle: PublishingBundle, now: string): PublishingBundle => {
   const tasks = refreshReadiness(chainDependencies(bundle.tasks));
   const active = currentTask(tasks);
   const requiredOpen = tasks.some((task) => task.required && !settled(task.status) && task.status !== 'needs-fix');

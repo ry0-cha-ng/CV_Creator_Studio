@@ -349,7 +349,7 @@ const PostsPanel = () => {
                       {post.content.title || post.content.map || '無題'}
                     </button>
                   </td>
-                  <td>{platformLabel(post.platform)}</td>
+                  <td>{platformLabel(post.platform, post.contentType)}</td>
                   <td>{post.content.map}</td>
                   <td>{hook}</td>
                   <td className="an-mono">{formatInt(metricOf(row, windowKind, 'views'))}</td>
@@ -695,7 +695,7 @@ const ExperimentsPanel = () => {
                 {bundle.posts.filter((post) => post.experimentId === selected.id).map((post) => (
                   <tr key={post.id}>
                     <td className="an-mono">{post.postedAt.slice(0, 10)}</td>
-                    <td>{platformLabel(post.platform)}</td>
+                    <td>{platformLabel(post.platform, post.contentType)}</td>
                     <td>{post.experimentArm === 'control' ? 'Control' : 'Variant'}</td>
                     <td>{post.content.map}</td>
                     <td>{reviewState(bundle, post)}</td>

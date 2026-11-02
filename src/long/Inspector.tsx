@@ -12,8 +12,10 @@ import { Field, Section } from './fields';
 import { AudioItemInspector, AvatarEventInspector, CaptionInspector, OverlayInspector, SceneInspector } from './InspectorItems';
 import { PlacementInspector, sourceTicksAt } from './InspectorPlacement';
 import { SrtImportDialog } from './SrtImportDialog';
+import { LONG_PUBLISHING_EVENT, LongPublishDialog } from './LongPublishDialog';
+import { LONG_LANGUAGE_NAME, longDoneCount, longLanguageOf, type LongPublishingView } from '../../shared/long/publishing';
 import { useLongPlayer } from './player';
-import { useLongStore, type Selection } from './store';
+import { saveLongNow, useLongStore, type Selection } from './store';
 import { formatMinSec } from './util';
 
 type Tab = 'selected' | 'chapter' | 'publish' | 'audio' | 'check';
@@ -320,6 +322,71 @@ const ChapterTab = ({ plan }: { plan: RenderPlan }) => {
   );
 };
 
+/** 言語ごとの投稿の記録と、投稿画面への入口 */
+const PublishSummary = () => {
+  const project = useLongStore((state) => state.project)!;
+  const [view, setView] = useState<LongPublishingView | null>(null);
+  const [open, setOpen] = useState(false);
+  const [revision, setRevision] = useState(0);
+  // 上部バー・ガイドから開いた投稿画面での変更も反映する
+  useEffect(() => {
+    const bump = (): void => setRevision((value) => value + 1);
+    window.addEventListener(LONG_PUBLISHING_EVENT, bump);
+    return () => window.removeEventListener(LONG_PUBLISHING_EVENT, bump);
+  }, []);
+  useEffect(() => {
+    if (project.exports.length === 0) return;
+    let cancel = false;
+    void saveLongNow()
+      .then(() => window.studio.long.publishing.get(project.id))
+      .then((next) => !cancel && setView(next))
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, [project.id, project.exports.length, open, revision]);
+  if (project.exports.length === 0) {
+    return <p className="dim" style={{ fontSize: 11 }}>書き出した後に、言語ごとの投稿をここから進めます。YouTube に接続していなくても、手動で投稿して URL を記録できます。</p>;
+  }
+  return (
+    <div>
+      {view?.tasks
+        .filter((task) => task.type === 'youtube-publish')
+        .map((task) => {
+          const language = longLanguageOf(task.preset);
+          const post = view.posts.find((item) => item.preset === task.preset);
+          return (
+            <div key={task.id} className="row" style={{ fontSize: 11.5 }}>
+              <span style={{ width: 48 }}>{language ? LONG_LANGUAGE_NAME[language] : ''}</span>
+              {post?.url ? (
+                <a href={post.url} target="_blank" rel="noreferrer" className="mono" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {post.url}
+                </a>
+              ) : (
+                <span className="dim" style={{ flex: 1 }}>
+                  {task.status === 'skipped' ? 'スキップ' : '未投稿'}
+                </span>
+              )}
+              {post?.publicationState && post.publicationState !== 'public' ? <span className="badge">{post.publicationState}</span> : null}
+            </div>
+          );
+        })}
+      {view?.workflow ? (
+        <div className="dim" style={{ fontSize: 11 }}>
+          {longDoneCount(view.tasks)} / {view.tasks.length} 完了{view.workflow.status === 'done' ? ' · すべて完了' : ''}
+        </div>
+      ) : null}
+      {project.publishing.url && !view?.posts.length ? (
+        <div className="dim" style={{ fontSize: 11 }}>以前に記録した URL：{project.publishing.url}（投稿画面で最初の言語の下書きとして使います）</div>
+      ) : null}
+      <button type="button" className="sm pri" style={{ marginTop: 4 }} onClick={() => setOpen(true)}>
+        投稿を進める
+      </button>
+      {open ? <LongPublishDialog onClose={() => setOpen(false)} /> : null}
+    </div>
+  );
+};
+
 const PublishTab = ({ plan }: { plan: RenderPlan }) => {
   const project = useLongStore((state) => state.project)!;
   const transact = useLongStore((state) => state.transact);
@@ -356,27 +423,8 @@ const PublishTab = ({ plan }: { plan: RenderPlan }) => {
         ))}
         <p className="dim" style={{ fontSize: 10.5 }}>説明文の自分で書いた部分は変えず、書き出す投稿文の末尾にチャプターを足します。YouTube でチャプターとして有効になるかは保証しません。</p>
       </Section>
-      <Section title="投稿の記録（通常動画）">
-        <Field label="URL">
-          <input value={project.publishing.url ?? ''} placeholder="https://www.youtube.com/watch?v=..." onChange={(event) => patch('投稿URL', { url: event.target.value || undefined })} />
-        </Field>
-        {project.publishing.url && !/^https:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[\w-]{6,}/.test(project.publishing.url) ? (
-          <div className="diag warning">YouTube 通常動画の URL（watch?v= または youtu.be/）ではありません</div>
-        ) : null}
-        <Field label="投稿日時">
-          <input type="datetime-local" value={project.publishing.postedAt?.slice(0, 16) ?? ''} onChange={(event) => patch('投稿日時', { postedAt: event.target.value ? new Date(event.target.value).toISOString() : undefined })} />
-        </Field>
-        <div className="row">
-          <button
-            type="button"
-            className="sm"
-            disabled={!project.publishing.url}
-            onClick={() => transact('投稿済みにする', (current) => ({ ...current, status: 'posted', publishing: { ...current.publishing, postedAt: current.publishing.postedAt ?? new Date().toISOString() } }))}
-          >
-            投稿済みにする
-          </button>
-          <span className="dim" style={{ fontSize: 10.5 }}>YouTube に接続していなくても、書き出したMP4と投稿文で手動投稿できます。</span>
-        </div>
+      <Section title="投稿（YouTube 通常動画）">
+        <PublishSummary />
         {project.exports.length > 0 ? (
           <div style={{ marginTop: 6 }}>
             <div className="muted">書き出した版</div>

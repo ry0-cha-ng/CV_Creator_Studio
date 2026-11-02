@@ -328,13 +328,21 @@ export const defaultStudioChecks = (metadata: YoutubePublishMetadata): StudioChe
       label: `ゲームタイトル（${metadata.gameTitleMemo || GAME_TITLE_MEMO}）`,
       required: true,
     }),
-    studioChecklistItemSchema.parse({
-      key: 'related-videos',
-      label: relatedRequired ? 'Shortsの関連動画をStudioで設定' : 'Shortsの関連動画は使わない',
-      required: relatedRequired,
-      status: relatedRequired ? 'unchecked' : 'not_applicable',
-      reason: relatedRequired ? undefined : '使わないを選択',
-    }),
+    metadata.contentKind === 'video'
+      ? studioChecklistItemSchema.parse({
+          key: 'related-videos',
+          label: 'Shortsの関連動画',
+          required: false,
+          status: 'not_applicable',
+          reason: '通常動画のため対象外',
+        })
+      : studioChecklistItemSchema.parse({
+          key: 'related-videos',
+          label: relatedRequired ? 'Shortsの関連動画をStudioで設定' : 'Shortsの関連動画は使わない',
+          required: relatedRequired,
+          status: relatedRequired ? 'unchecked' : 'not_applicable',
+          reason: relatedRequired ? undefined : '使わないを選択',
+        }),
     studioChecklistItemSchema.parse({
       key: 'shorts-cover',
       label: 'ShortsカバーをStudioで確認',
@@ -366,6 +374,26 @@ export const defaultStudioChecks = (metadata: YoutubePublishMetadata): StudioChe
       label: '翻訳欄（任意）',
       required: false,
     }),
+    // 通常動画（横動画）だけの確認。Shorts の項目は変えない
+    ...(metadata.contentKind === 'video'
+      ? [
+          studioChecklistItemSchema.parse({
+            key: 'chapters',
+            label: 'チャプターが表示されるか確認（説明欄の時刻。YouTube の条件を満たさないと表示されない）',
+            required: true,
+          }),
+          studioChecklistItemSchema.parse({
+            key: 'subtitles',
+            label: '字幕（SRT）をStudioでアップロード（任意）',
+            required: false,
+          }),
+          studioChecklistItemSchema.parse({
+            key: 'end-screen',
+            label: '終了画面・カードをStudioで設定（任意。アプリ内のエンディング画像とは別）',
+            required: false,
+          }),
+        ]
+      : []),
   ];
 };
 

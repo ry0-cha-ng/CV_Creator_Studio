@@ -1,6 +1,7 @@
 import type { Diagnostic } from './diagnostics';
 import type { LongTemplateParams } from './templates';
 import type { LongAsset, LongLanguage, LongProject } from './schema';
+import type { LongPublishingView } from './publishing';
 
 /** 横動画モードの IPC。window.studio.long に入る。 */
 
@@ -132,6 +133,8 @@ export type LongExportJobResult = {
   partial: boolean;
   /** 前回の書き出しで完了済み（再開時に再利用した。記録は前回済み） */
   reused?: boolean;
+  /** 書き出した内容の識別値（投稿前確認で「書き出し後に変えていないか」を判定する） */
+  contentStamp?: string;
 };
 
 export type LongExportFailure = {
@@ -187,4 +190,20 @@ export interface LongStudioApi {
   /** ファイル（project.json / long-project.json）を選んで、制作形式と ID を返す */
   openProjectFile(): Promise<ProjectFormatResult | null>;
   projectFormat(id: string): Promise<ProjectFormatResult>;
+  /** 投稿運用（YouTube 通常動画）。短尺と同じワークフローの表を使う */
+  publishing: {
+    get(projectId: string): Promise<LongPublishingView>;
+    start(projectId: string): Promise<LongPublishingView>;
+    patch(projectId: string, taskId: string, body: LongPublishingTaskBody): Promise<LongPublishingView>;
+    complete(projectId: string, taskId: string, body: LongPublishingTaskBody): Promise<LongPublishingView>;
+    skip(projectId: string, taskId: string, reason?: string): Promise<LongPublishingView>;
+    needsFix(projectId: string, taskId: string): Promise<LongPublishingView>;
+  };
 }
+
+export type LongPublishingTaskBody = {
+  checklist?: Array<{ id: string; checked: boolean }>;
+  url?: string;
+  postedAt?: string;
+  qa?: Record<string, Record<string, 'ok' | 'problem'>>;
+};

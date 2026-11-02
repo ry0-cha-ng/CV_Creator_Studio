@@ -4,6 +4,7 @@ import { hasErrors } from '../../shared/long/diagnostics';
 import { AssetPanel } from './AssetPanel';
 import { ExportDialog } from './ExportDialog';
 import { Inspector } from './Inspector';
+import { LongPublishDialog } from './LongPublishDialog';
 import { LongTimeline } from './LongTimeline';
 import { LongPlayerContext } from './player';
 import { PreviewPane } from './PreviewPane';
@@ -21,6 +22,7 @@ export const LongWorkspace = ({ active }: { active: boolean }) => {
   const future = useLongStore((state) => state.future.length);
   const { plan } = useLongPlan();
   const [exporting, setExporting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   if (!plan) return null;
   const errors = hasErrors(plan.diagnostics);
   return (
@@ -62,6 +64,9 @@ export const LongWorkspace = ({ active }: { active: boolean }) => {
             詳細編集
           </button>
         </span>
+        <button type="button" disabled={project.exports.length === 0} title={project.exports.length === 0 ? '書き出した後に投稿できます' : 'YouTube（通常動画）への投稿を進めます'} onClick={() => setPublishing(true)}>
+          投稿
+        </button>
         <button type="button" className="pri" onClick={() => setExporting(true)} title={errors ? '書き出す前に解決が必要な項目があります' : undefined}>
           書き出す（{project.output.languages.map((item) => (item === 'ja' ? '日本語' : item.toUpperCase())).join('・')}）
         </button>
@@ -73,7 +78,17 @@ export const LongWorkspace = ({ active }: { active: boolean }) => {
         <Storyboard plan={plan} />
         <LongTimeline plan={plan} />
       </div>
-      {exporting ? <ExportDialog plan={plan} onClose={() => setExporting(false)} /> : null}
+      {exporting ? (
+        <ExportDialog
+          plan={plan}
+          onClose={() => setExporting(false)}
+          onPublish={() => {
+            setExporting(false);
+            setPublishing(true);
+          }}
+        />
+      ) : null}
+      {publishing ? <LongPublishDialog onClose={() => setPublishing(false)} /> : null}
     </LongPlayerContext.Provider>
   );
 };

@@ -126,6 +126,28 @@ export const buildChapters = (plan: RenderPlan, projectId: string): ChapterDraft
 
 export type CreditTrack = { title: string; artist: string; creditRequired: boolean; creditText: string };
 
+/** 説明文の後ろに足すブロック（チャプター・クレジット・タグ） */
+const descriptionSuffix = (project: LongProject, language: LongLanguage, chapters: ChapterDraft, credits: CreditTrack[]): string[] => {
+  const heading = language === 'ja' ? 'チャプター' : language === 'ko' ? '챕터' : 'Chapters';
+  const creditHeading = language === 'ja' ? 'BGM・効果音' : language === 'ko' ? 'BGM・효과음' : 'Music & SFX';
+  const creditLines = credits
+    .filter((track) => track.creditRequired)
+    .map((track) => track.creditText.trim() || `${track.title}${track.artist ? ` / ${track.artist}` : ''}`);
+  const blocks: string[] = [];
+  if (chapters.text) blocks.push('', `${heading}`, chapters.text);
+  if (creditLines.length > 0) blocks.push('', creditHeading, ...creditLines);
+  if (project.publishing.tags.length > 0) blocks.push('', project.publishing.tags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)).join(' '));
+  return blocks;
+};
+
+/** 投稿するタイトル（その言語がなければ日本語、なければ Project 名） */
+export const longPostTitle = (project: LongProject, language: LongLanguage): string =>
+  localizedText(project.publishing.title, language) || localizedText(project.publishing.title, 'ja') || project.title;
+
+/** YouTube の説明欄：ユーザーの説明文は変えず、その後ろにチャプター・クレジット・タグを足す */
+export const buildLongDescription = (project: LongProject, language: LongLanguage, chapters: ChapterDraft, credits: CreditTrack[]): string =>
+  [localizedText(project.publishing.description, language), ...descriptionSuffix(project, language, chapters, credits)].join('\n').trim();
+
 /** 投稿文：ユーザーの説明文は変更せず、その後ろにチャプター・クレジットのブロックを足す */
 export const buildPostText = (
   project: LongProject,
@@ -133,23 +155,14 @@ export const buildPostText = (
   chapters: ChapterDraft,
   credits: CreditTrack[],
 ): string => {
-  const title = localizedText(project.publishing.title, language) || localizedText(project.publishing.title, 'ja') || project.title;
-  const description = localizedText(project.publishing.description, language);
-  const heading = language === 'ja' ? 'チャプター' : language === 'ko' ? '챕터' : 'Chapters';
-  const creditHeading = language === 'ja' ? 'BGM・効果音' : language === 'ko' ? 'BGM・효과음' : 'Music & SFX';
-  const creditLines = credits
-    .filter((track) => track.creditRequired)
-    .map((track) => track.creditText.trim() || `${track.title}${track.artist ? ` / ${track.artist}` : ''}`);
   const blocks = [
     `【${language === 'ja' ? 'タイトル' : language === 'ko' ? '제목' : 'Title'}】`,
-    title,
+    longPostTitle(project, language),
     '',
     `【${language === 'ja' ? '説明文' : language === 'ko' ? '설명' : 'Description'}】`,
-    description,
+    localizedText(project.publishing.description, language),
+    ...descriptionSuffix(project, language, chapters, credits),
   ];
-  if (chapters.text) blocks.push('', `${heading}`, chapters.text);
-  if (creditLines.length > 0) blocks.push('', creditHeading, ...creditLines);
-  if (project.publishing.tags.length > 0) blocks.push('', project.publishing.tags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)).join(' '));
   return `${blocks.join('\n').trim()}\n`;
 };
 
@@ -171,6 +184,8 @@ export type LongExportMetaInput = {
   chapters: ChapterDraft;
   loudness: { measuredI: number | null; normalized: boolean };
   assetStamps: Record<string, { size: number; mtimeMs: number } | undefined>;
+  /** 投稿に使うタイトル・説明欄（書き出した動画のチャプターと一致させるため、書き出し時に固定する） */
+  youtube?: { title: string; description: string; tags: string[] };
 };
 
 const secOf = (plan: RenderPlan, frame: number): number => Math.round(ticksToSec(frameTicks(plan, frame)) * 1000) / 1000;
@@ -252,6 +267,7 @@ export const buildLongMeta = (input: LongExportMetaInput): Record<string, unknow
       stamp: input.assetStamps[asset.id] ?? asset.stamp,
     })),
     files: input.files,
+    youtube: input.youtube ?? null,
   };
 };
 

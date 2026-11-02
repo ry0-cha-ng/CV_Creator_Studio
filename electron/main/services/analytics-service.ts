@@ -35,6 +35,7 @@ import {
   type MetricSnapshot,
 } from '../../../shared/schema/analytics';
 import type { Project } from '../../../shared/schema/project';
+import { isLongPreset } from '../../../shared/delivery-presets';
 import { emptyEstimate, nearestExport, snapshotFromProject, type PublishedExportRecord } from '../../../shared/published-snapshot';
 import type { PublishedSnapshot } from '../../../shared/schema/published';
 import { manualMetricSchema, type ManualMetric } from '../../../shared/schema/manual-metric';
@@ -497,7 +498,7 @@ export class AnalyticsService {
     for (const post of this.posts()) {
       if (post.platform !== 'youtube' || store.forPost(post.id)) continue;
       const project = post.projectId ? projectsById.get(post.projectId) : undefined;
-      const candidate = project ? nearestExport(store.unboundByProject(project.id), post) : undefined;
+      const candidate = project ? nearestExport(store.unboundByProject(project.id), { postedAt: post.postedAt, lang: post.lang === 'ko' ? undefined : post.lang }) : undefined;
       if (candidate) {
         const bound = store.bind(candidate.exportId, post.id);
         if (bound) this.attachExportRef(post, bound);
@@ -510,7 +511,7 @@ export class AnalyticsService {
             postId: post.id,
             source: 'estimate',
             frozenAt: now,
-            lang: post.lang,
+            lang: post.lang === 'ko' ? undefined : post.lang,
             basename: post.basename,
           })
         : emptyEstimate({
@@ -764,6 +765,8 @@ export class AnalyticsService {
   }
 
   private shouldReview(post: AnalyticsPost): boolean {
+    // 横動画の振り返り画面は H2。短尺の振り返り（短尺の Project を読む）に載せない
+    if (isLongPreset(post.preset)) return false;
     if (post.publicationState === 'scheduled' || post.publicationState === 'private' || post.publicationState === 'unlisted') {
       return false;
     }
@@ -1002,6 +1005,110 @@ export class AnalyticsService {
       .run(post.id, post.projectId ?? null, post.preset ?? null, post.postedAt, claimed ? null : input.videoId, JSON.stringify(post));
     if (this.shouldReview(post) && post.actualPublishedAt) this.ensureReviewTask(post, now);
     return post;
+  }
+
+  /**
+   * 横動画（YouTube 通常動画）の投稿を Post に記録する。短尺の Project は使わない。
+   * 書き出し時に固定した公開版（exportId）を投稿へ結び付け、編集後も上書きしない。
+   */
+  upsertLongPost(input: {
+    projectId: string;
+    projectTitle: string;
+    preset: NonNullable<AnalyticsPost['preset']>;
+    lang: 'ja' | 'en' | 'ko';
+    url: string;
+    videoId?: string;
+    postedAt?: string;
+    publicationState?: NonNullable<AnalyticsPost['publicationState']>;
+    scheduledPublishAt?: string;
+    timezone?: string;
+    uploadedAt?: string;
+    actualPublishedAt?: string;
+    publishedAtSource?: AnalyticsPost['publishedAtSource'];
+    firstObservedPublicAt?: string;
+    publicationConfirmedAt?: string;
+    everPublished?: boolean;
+    exportRef?: NonNullable<AnalyticsPost['exportRef']>;
+    content: Partial<AnalyticsPost['content']>;
+  }): AnalyticsPost {
+    this.ensure();
+    const now = new Date().toISOString();
+    const byVideo = input.videoId ? this.importedPostFor(input.videoId) : undefined;
+    const byKey = this.database!
+      .prepare('SELECT id, data FROM analytics_posts WHERE project_id = ? AND preset = ?')
+      .get(input.projectId, input.preset) as { id: string; data: string } | undefined;
+    const stored = byKey ? analyticsPostSchema.parse(JSON.parse(byKey.data)) : byVideo;
+    const id = stored?.id ?? randomUUID();
+    const sameVideo = !stored?.youtubeVideoId || !input.videoId || stored.youtubeVideoId === input.videoId;
+    // 投稿をやり直して別の動画になったら、前の動画の公開日時などは引き継がない
+    const previous = sameVideo
+      ? stored
+      : stored && {
+          ...stored,
+          postedAt: '',
+          uploadedAt: undefined,
+          firstObservedPublicAt: undefined,
+          actualPublishedAt: undefined,
+          publishedAtSource: undefined,
+          publicationConfirmedAt: undefined,
+          everPublished: undefined,
+          scheduledPublishAt: undefined,
+        };
+    const postedAt = input.actualPublishedAt || input.postedAt || previous?.actualPublishedAt || previous?.postedAt || input.uploadedAt || now;
+    const post = analyticsPostSchema.parse({
+      ...(previous ?? {}),
+      id,
+      projectId: input.projectId,
+      preset: input.preset,
+      platform: 'youtube',
+      lang: input.lang,
+      url: input.url,
+      postedAt,
+      importOrigin: 'cvcs',
+      youtubeVideoId: input.videoId ?? previous?.youtubeVideoId,
+      publicationState: input.publicationState ?? previous?.publicationState,
+      scheduledPublishAt: input.scheduledPublishAt,
+      timezone: input.timezone ?? previous?.timezone,
+      uploadedAt: input.uploadedAt ?? previous?.uploadedAt,
+      firstObservedPublicAt: input.firstObservedPublicAt ?? previous?.firstObservedPublicAt,
+      actualPublishedAt: input.actualPublishedAt ?? previous?.actualPublishedAt,
+      publishedAtSource: input.publishedAtSource ?? previous?.publishedAtSource,
+      publicationConfirmedAt: input.publicationConfirmedAt ?? previous?.publicationConfirmedAt,
+      everPublished: input.everPublished ?? previous?.everPublished,
+      // 別の動画に差し替えた場合だけ版を付け直す
+      exportRef: sameVideo ? previous?.exportRef ?? input.exportRef : input.exportRef,
+      contentType: 'VIDEO_ON_DEMAND',
+      contentTypeSource: 'production',
+      basename: input.exportRef?.basename ?? previous?.basename,
+      templateId: previous?.templateId ?? 'T-LONG',
+      hookPattern: previous?.hookPattern ?? 'custom',
+      content: previous?.exportRef && sameVideo ? previous.content : { title: input.projectTitle, templateId: 'T-LONG', ...input.content },
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    });
+    const claimed = input.videoId ? this.videoClaimedBy(input.videoId, [id, byVideo?.id]) : undefined;
+    if (byVideo && byVideo.id !== id) this.absorbImported(byVideo.id, id);
+    this.database!
+      .prepare(
+        `INSERT INTO analytics_posts (id, project_id, preset, posted_at, youtube_video_id, data)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id, preset) DO UPDATE SET
+           id = excluded.id,
+           posted_at = excluded.posted_at,
+           youtube_video_id = excluded.youtube_video_id,
+           data = excluded.data`,
+      )
+      .run(post.id, post.projectId ?? null, post.preset ?? null, post.postedAt, claimed || !post.youtubeVideoId ? null : post.youtubeVideoId, JSON.stringify(post));
+    // 書き出し時に固定した公開版を、この投稿に結び付ける（付いた後は外さない）
+    // 既に別の投稿に付いた版（同じ書き出しを二度投稿）は付け替えず、Post 側の参照だけ残す
+    if (post.exportRef?.exportId) this.publishedStore().bind(post.exportRef.exportId, post.id);
+    return post;
+  }
+
+  /** 横動画 Project の投稿（言語ごと） */
+  longPosts(projectId: string): AnalyticsPost[] {
+    this.ensure();
+    return this.posts().filter((post) => post.projectId === projectId && isLongPreset(post.preset));
   }
 
   ensure24hTasks(): void {

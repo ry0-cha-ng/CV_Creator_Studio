@@ -556,14 +556,14 @@ export const unlinkedConclusions = (bundle: AnalyticsBundle): UnlinkedConclusion
   return [...experiments, ...decisions].sort((a, b) => b.at.localeCompare(a.at));
 };
 
-export const platformLabel = (platform: string): string => {
-  if (platform === 'youtube') return 'YouTube Shorts';
+export const platformLabel = (platform: string, contentType?: string): string => {
+  if (platform === 'youtube') return contentType === 'VIDEO_ON_DEMAND' ? 'YouTube 横動画' : 'YouTube Shorts';
   if (platform === 'tiktok') return 'TikTok';
   return 'X';
 };
 
 export const langLabel = (lang: string | undefined): string =>
-  lang === 'en' ? 'English' : lang === 'ja' ? '日本語' : '言語未設定';
+  lang === 'en' ? 'English' : lang === 'ja' ? '日本語' : lang === 'ko' ? '한국어' : '言語未設定';
 
 export const presetLanguageLabel = (preset: DeliveryPresetId): string => DELIVERY_PRESETS[preset].label;
 

@@ -300,6 +300,44 @@ export const checkPostUrl = (
   context?: PostUrlContext,
 ): PostUrlVerdict => applyContext(platform, judge(platform, input), context);
 
+const watchUrl = (videoId: string): string => `https://www.youtube.com/watch?v=${videoId}`;
+
+/**
+ * YouTube 通常動画（横動画）の URL。watch?v= を正とし、youtu.be と Studio の URL は置き換えを提案する。
+ * Shorts の URL は通常動画として公開されていない可能性があるため警告する（Shorts 用の判定は変えない）。
+ */
+const judgeYoutubeVideo = (input: string): PostUrlVerdict => {
+  const base = judge('youtube', input);
+  if (base.status === 'empty') return { status: 'empty', message: '公開したら、YouTube の動画のURL（watch?v=…）を貼ってください' };
+  if (base.status === 'error' || !base.videoId) {
+    return error(
+      base.message === GENERIC_ERROR.youtube
+        ? 'YouTube 動画のURLではありません（youtube.com/watch?v=… か youtu.be/…）'
+        : (base.message ?? '').replace('公開した Shorts', '公開した動画'),
+    );
+  }
+  const videoId = base.videoId;
+  const url = readUrl(input);
+  const host = url ? bareHost(url.hostname) : '';
+  const head = url ? segments(url)[0] ?? '' : '';
+  if (host === 'studio.youtube.com') {
+    return warning('YouTube Studio の編集画面のURLです', `https://studio.youtube.com/video/${videoId}/edit`, { url: watchUrl(videoId), label: '公開URLに置き換える' }, videoId);
+  }
+  if (head === 'shorts') {
+    return warning(
+      'Shorts のURLです。横動画は通常動画として公開されたか確認してください',
+      watchUrl(videoId),
+      { url: watchUrl(videoId), label: '通常動画のURL（watch?v=）にする' },
+      videoId,
+    );
+  }
+  return valid(watchUrl(videoId), videoId);
+};
+
+/** 横動画（YouTube 通常動画）の投稿URL。登録済みURLの重複も検出する */
+export const checkYoutubeVideoUrl = (input: string, context?: PostUrlContext): PostUrlVerdict =>
+  applyContext('youtube', judgeYoutubeVideo(input), context);
+
 /** Shorts・watch・youtu.be・Studio のどの表記でも同じ動画IDを返す。横動画の照合にも使う。 */
 export const youtubeVideoIdFromUrl = (input: string): string | undefined => {
   const verdict = judge('youtube', input);

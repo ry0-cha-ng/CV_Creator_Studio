@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { deliveryPresetIdSchema } from '../delivery-presets';
 import { contentTypeSourceSchema, importOriginSchema, youtubeContentTypeSchema } from './youtube';
 
-const analyticsLangSchema = z.enum(['ja', 'en']);
+const analyticsLangSchema = z.enum(['ja', 'en', 'ko']);
 const analyticsHookSchema = z.enum([
   'result',
   'number',
