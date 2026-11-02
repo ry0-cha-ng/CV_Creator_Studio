@@ -9,7 +9,7 @@ import {
 import { LineupThumbnail } from '../../remotion/LineupThumbnail';
 import { ctaHostScene } from '../../shared/cta-design';
 import { resolveCtaDesign, S4_CTA_HOLD_SEC } from '../../shared/s4-cta';
-import { activeTimeline } from '../../shared/timeline';
+import { activeTimeline, sceneSpanOf } from '../../shared/timeline';
 import type { AudioTrack } from '../../shared/schema/audio';
 import type { Language, Project } from '../../shared/schema/project';
 import type { SceneKey } from '../../shared/schema/project-keys';
@@ -225,9 +225,10 @@ export const GuidePreview = ({
           (captionPreview === 'throw' ? 'aim' : captionPreview))
       : null;
   const loopKey = step === 5 ? captionSceneKey : step === 3 ? sceneKey : null;
-  const item = loopKey
-    ? activeTimeline(project).items.find((entry) => entry.sceneKey === loopKey)
-    : undefined;
+  // カットが複数あるシーンは、すべてのカットを通して繰り返す
+  const timelineItems = activeTimeline(project).items;
+  const loopIndex = loopKey ? timelineItems.findIndex((entry) => entry.sceneKey === loopKey) : -1;
+  const item = loopIndex >= 0 ? sceneSpanOf(timelineItems, loopIndex) : undefined;
   const ctaLead =
     captionPreview === 'cta' && resolveCtaDesign(project) === 's4-block' && item
       ? Math.max(0, item.duration - S4_CTA_HOLD_SEC)
@@ -370,8 +371,8 @@ export const GuidePreview = ({
             : captionPreviewLabel(project, captionPreview)
           : step === 3
             ? item
-              ? `${sceneGuideCopy(project, sceneKey).title}（このシーンを繰り返し再生）`
-              : `${sceneGuideCopy(project, sceneKey).title}（このシーンは入っていません）`
+              ? `${sceneGuideCopy(sceneKey).title}（このシーンを繰り返し再生）`
+              : `${sceneGuideCopy(sceneKey).title}（このシーンは入っていません）`
             : posting
               ? postApp === 'tiktok'
                 ? 'TikTok での見え方'

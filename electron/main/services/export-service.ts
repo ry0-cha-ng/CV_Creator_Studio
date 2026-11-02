@@ -30,7 +30,8 @@ import { videoCtaRenders } from '../../../shared/s4-cta';
 import type { PublishedExportRecord } from '../../../shared/published-snapshot';
 import type { PublishedSnapshot } from '../../../shared/schema/published';
 import { parseProject, type Project } from '../../../shared/schema/project';
-import { activeTimeline } from '../../../shared/timeline';
+import { activeTimeline, SCENE_BAND } from '../../../shared/timeline';
+import { extraCutsOf, sceneClipsForExport } from '../../../shared/scene-cuts';
 import type { AudioTrack } from '../../../shared/schema/audio';
 import type { LibraryService } from './library-service';
 import {
@@ -379,10 +380,22 @@ export class ExportService {
               hookText: project.captions.find((caption) => caption.id === 'hook')?.text[
                 language
               ],
-              scenes: project.scenes.map((scene) => ({
-                sceneKey: scene.sceneKey,
-                layout916: scene.layout916,
-              })),
+              scenes: project.scenes.map((scene) => {
+                // カットが複数あるシーンだけ、カットの一覧を書く（1本のシーンは従来どおり）
+                const extras = extraCutsOf(scene);
+                const cuts =
+                  extras.length > 0
+                    ? [scene.clipId, ...extras.map((cut) => cut.clipId)].flatMap((clipId) => {
+                        const clip = project.clips.find((item) => item.id === clipId);
+                        return clip ? [{ assetId: clip.assetId, in: clip.in, out: clip.out }] : [];
+                      })
+                    : undefined;
+                return {
+                  sceneKey: scene.sceneKey,
+                  layout916: scene.layout916,
+                  ...(cuts ? { cuts } : {}),
+                };
+              }),
               lineup: {
                 map: project.lineup.map,
                 site: project.lineup.site,
@@ -483,9 +496,8 @@ export class ExportService {
       if (!still) throw new Error('カード用の静止画が見つかりません');
       required.add(still.path);
     }
-    for (const scene of project.scenes) {
-      const clip = project.clips.find((item) => item.id === scene.clipId);
-      const asset = project.assets.find((item) => item.id === clip?.assetId);
+    for (const clip of sceneClipsForExport(project)) {
+      const asset = project.assets.find((item) => item.id === clip.assetId);
       if (asset) required.add(asset.path);
     }
     for (const track of audioTracks) required.add(track.filePath);
@@ -592,6 +604,15 @@ export class ExportService {
       });
       if (missing.length > 0) {
         throw new Error(`必須クリップが未設定です: ${missing.join(', ')}`);
+      }
+      for (const scene of project.scenes) {
+        extraCutsOf(scene).forEach((cut, index) => {
+          const clip = project.clips.find((item) => item.id === cut.clipId);
+          const asset = project.assets.find((item) => item.id === clip?.assetId);
+          if (!clip || !asset) {
+            throw new Error(`${SCENE_BAND[scene.sceneKey]}のカット${index + 2}の動画が見つかりません`);
+          }
+        });
       }
     }
     const missingLanguages: string[] = [];

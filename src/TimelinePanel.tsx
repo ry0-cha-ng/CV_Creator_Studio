@@ -20,7 +20,7 @@ import {
   setVolumePoint,
   splitTimelineItemAt,
   defaultLoopRange,
-  playbackClip,
+  itemClip,
   syncTimelineDurationsToScenes,
   trimTimelineItem,
   withDemoDuration,
@@ -1112,7 +1112,7 @@ export const TimelinePanel = ({
             >
               {timeline.items.map((item, index) => {
                 const scene = project.scenes.find((entry) => entry.sceneKey === item.sceneKey);
-                const mediaClip = playbackClip(project, item.sceneKey);
+                const mediaClip = itemClip(project, item);
                 const mediaAsset = project.assets.find((entry) => entry.id === mediaClip?.assetId);
                 const selected = selection?.kind === 'clip' && selection.id === item.id;
                 return (
@@ -1179,7 +1179,7 @@ export const TimelinePanel = ({
                 {timeline.items
                   .filter((item) => item.sceneKey !== 'card')
                   .map((item) => {
-                    const mediaClip = playbackClip(project, item.sceneKey);
+                    const mediaClip = itemClip(project, item);
                     const mediaAsset = project.assets.find((entry) => entry.id === mediaClip?.assetId);
                     const envelope = mediaAsset?.loudnessEnvelope ?? [];
                     const x = PAD + item.start * pxPerSec;

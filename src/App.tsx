@@ -13,6 +13,7 @@ import {
 import type { AudioUsageRecord, ProjectSummary } from '../shared/ipc';
 import type { Project, SceneKey } from '../shared/schema/project';
 import { applyDemoDurationToProject, applySceneCutDuration, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
+import { clipUsageCount } from '../shared/scene-cuts';
 import { useStudioStore, type SaveCommit } from './store';
 import { TimelinePanel } from './TimelinePanel';
 import { PreviewStage } from './PreviewStage';
@@ -391,7 +392,7 @@ export const App = () => {
     const clip = project.clips.find((item) => item.id === scene?.clipId);
     if (!scene || !clip) return;
 
-    const usageCount = project.scenes.filter((item) => item.clipId === clip.id).length;
+    const usageCount = clipUsageCount(project, clip.id);
     const nextClipId = usageCount > 1 ? crypto.randomUUID() : clip.id;
     store.updateProject((current) => {
       if (usageCount > 1) {
