@@ -349,7 +349,10 @@ export const GuideShell = ({
                 <ReviewStep
                   project={project}
                   tracks={store.audioTracks}
-                  onGoto={go}
+                  onGoto={(next, key) => {
+                    if (key) onSceneKey(key);
+                    go(next);
+                  }}
                   onGate={rememberReviewGate}
                 />
               )}

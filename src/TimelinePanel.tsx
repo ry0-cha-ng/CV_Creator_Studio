@@ -13,6 +13,7 @@ import {
   applySceneOrder,
   bgmDurationForProject,
   curveValue,
+  cutOnlyItem,
   moveEffect,
   removeEffect,
   removeVolumePoint,
@@ -27,6 +28,8 @@ import {
 } from '../shared/timeline';
 import { CTA_DESIGN_OPTIONS, ctaHostScene, type CtaDesign } from '../shared/cta-design';
 import { resolveCtaDesign } from '../shared/s4-cta';
+import { cutIdOfItem, extraCutOfItem, extraCutsOf, hasExtraCuts, isPrimaryItem } from '../shared/scene-cuts';
+import { assignClipToCut } from '../shared/scene-cut-edit';
 import {
   BUILTIN_VIDEO_STRUCTURE_TEMPLATES,
   structureLabel,
@@ -54,7 +57,7 @@ type Props = {
   onChange: (updater: (project: Project) => Project) => void;
   onSave: () => void;
   onImportVideo: (sceneKey?: SceneKey) => void;
-  onEditRange: (sceneKey: SceneKey) => void;
+  onEditRange: (sceneKey: SceneKey, cutId?: string) => void;
   defaultBgmTrackId: string | null;
   onRegisterAudio: (registration: AudioRegistration, sourcePath?: string) => void;
   onSetDefaultBgm: (trackId: string | null) => void;
@@ -251,9 +254,15 @@ export const TimelinePanel = ({
   const [inspectSec, setInspectSec] = useState(0);
   useEffect(() => {
     if (!focusSceneKey) return;
-    const item = activeTimeline(project).items.find((entry) => entry.sceneKey === focusSceneKey);
+    const items = activeTimeline(project).items;
+    const item = items.find((entry) => entry.sceneKey === focusSceneKey);
     if (!item) return;
-    setSelection({ kind: 'clip', id: item.id });
+    // そのシーンの項目（カット2以降・分割した項目）をクリックして来たときは、その選択を残す
+    setSelection((current) =>
+      current?.kind === 'clip' && items.some((entry) => entry.id === current.id && entry.sceneKey === focusSceneKey)
+        ? current
+        : { kind: 'clip', id: item.id },
+    );
   }, [focusSceneKey, project.id]);
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const [showStructureEditor, setShowStructureEditor] = useState(false);
@@ -769,16 +778,23 @@ export const TimelinePanel = ({
     }
   };
 
-  const assignClip = (sceneKey: SceneKey, clipId: string): void => {
+  /** 項目へ素材をドロップしたとき。カットが2本以上のシーンでは、その項目のカットの動画を差し替える。 */
+  const assignClip = (item: TimelineItem, clipId: string): void => {
     if (!project.clips.some((clip) => clip.id === clipId)) return;
+    const { sceneKey } = item;
+    const cutId = cutIdOfItem(project, item);
     historyArmed.current = false;
     pushUndo();
-    onChange((current) => ({
-      ...current,
-      scenes: current.scenes.map((scene) =>
-        scene.sceneKey === sceneKey ? { ...scene, clipId } : scene,
-      ),
-    }));
+    onChange((current) =>
+      hasExtraCuts(current, sceneKey)
+        ? assignClipToCut(current, sceneKey, cutId, clipId)
+        : {
+            ...current,
+            scenes: current.scenes.map((scene) =>
+              scene.sceneKey === sceneKey ? { ...scene, clipId } : scene,
+            ),
+          },
+    );
     historyArmed.current = false;
   };
 
@@ -842,12 +858,34 @@ export const TimelinePanel = ({
     if (item.sceneKey === 'loop' && !scene?.clipId) {
       return defaultLoopRange(project) ? 'S1 の直前' : 'S1 と同じ映像';
     }
-    const clip = project.clips.find((entry) => entry.id === scene?.clipId);
+    const extra = extraCutOfItem(project, item);
+    const clip = project.clips.find((entry) => entry.id === (extra ? extra.clipId : scene?.clipId));
     const asset = project.assets.find((entry) => entry.id === clip?.assetId);
-    if (!asset) return '素材なし';
+    const cutName = extra ? `${SCENE_BAND[item.sceneKey]} · カット${extraCutsOf(scene).indexOf(extra) + 2}` : '';
+    if (!asset) return cutName ? `${cutName}  素材なし` : '素材なし';
     const seconds = asset.meta.duration ?? item.duration;
-    return `${fileName(asset.path)}  ${seconds.toFixed(1)}s`;
+    const source = `${fileName(asset.path)}  ${seconds.toFixed(1)}s`;
+    return cutName ? `${cutName}  ${source}` : source;
   };
+
+  /** 同じシーンの中で、別のカットが始まる項目（境目に細い区切りを出す）。 */
+  const startsNewCut = (index: number): boolean => {
+    const item = timeline.items[index];
+    const prev = timeline.items[index - 1];
+    if (!item || !prev || prev.sceneKey !== item.sceneKey) return false;
+    return cutIdOfItem(project, prev) !== cutIdOfItem(project, item);
+  };
+
+  /** シーンの帯。同じシーンが続く項目（カット・分割）は1本にまとめる。 */
+  const sceneBands = timeline.items.reduce<Array<{ id: string; sceneKey: SceneKey; start: number; end: number }>>(
+    (bands, item) => {
+      const last = bands[bands.length - 1];
+      if (last && last.sceneKey === item.sceneKey) last.end = item.start + item.duration;
+      else bands.push({ id: item.id, sceneKey: item.sceneKey, start: item.start, end: item.start + item.duration });
+      return bands;
+    },
+    [],
+  );
 
   const sameSceneOrder = (left: SceneKey[], right: SceneKey[]): boolean =>
     left.length === right.length && left.every((sceneKey, index) => sceneKey === right[index]);
@@ -1075,13 +1113,13 @@ export const TimelinePanel = ({
               ))}
             </div>
             <div className="tl-scenes" onPointerDown={beginSeek}>
-              {timeline.items.map((item) => (
+              {sceneBands.map((band) => (
                 <div
                   className="tl-scene"
-                  key={item.id}
-                  style={{ left: PAD + item.start * pxPerSec, width: Math.max(24, item.duration * pxPerSec - 2) }}
+                  key={band.id}
+                  style={{ left: PAD + band.start * pxPerSec, width: Math.max(24, (band.end - band.start) * pxPerSec - 2) }}
                 >
-                  {SCENE_BAND[item.sceneKey]}
+                  {SCENE_BAND[band.sceneKey]}
                 </div>
               ))}
             </div>
@@ -1115,10 +1153,11 @@ export const TimelinePanel = ({
                 const mediaClip = itemClip(project, item);
                 const mediaAsset = project.assets.find((entry) => entry.id === mediaClip?.assetId);
                 const selected = selection?.kind === 'clip' && selection.id === item.id;
+                const primary = isPrimaryItem(project, item);
                 return (
                   <div
                     key={item.id}
-                    className={`tl-clip ${item.sceneKey === 'card' ? 'is-card' : ''} ${selected ? 'is-selected' : ''}`}
+                    className={`tl-clip ${item.sceneKey === 'card' ? 'is-card' : ''} ${selected ? 'is-selected' : ''} ${startsNewCut(index) ? 'is-cut-start' : ''}`}
                     style={{ left: PAD + item.start * pxPerSec, width: Math.max(12, item.duration * pxPerSec - 2) }}
                     onPointerDown={(event) => dragClip(item, index, event)}
                     onDragOver={allowDrop}
@@ -1126,7 +1165,7 @@ export const TimelinePanel = ({
                       event.preventDefault();
                       event.stopPropagation();
                       const clipId = event.dataTransfer.getData(CLIP_DRAG_TYPE);
-                      if (clipId && !locked('v1')) assignClip(item.sceneKey, clipId);
+                      if (clipId && !locked('v1')) assignClip(item, clipId);
                     }}
                   >
                     <div className="tl-clip-label">{clipLabel(item)}</div>
@@ -1144,13 +1183,13 @@ export const TimelinePanel = ({
                         />
                       )}
                     </div>
-                    {scene?.zoom?.enabled && <span className="tl-badge">Z</span>}
+                    {primary && scene?.zoom?.enabled && <span className="tl-badge">Z</span>}
                     {item.speed !== 1 && <span className="tl-badge tl-badge-speed">{item.speed}x</span>}
-                    {item.transition !== 'cut' && (
+                    {item.transition !== 'cut' && !cutOnlyItem(project, timeline.items, index) && (
                       <span className="tl-badge tl-badge-trans">{item.transition === 'fade' ? 'F' : 'S'}</span>
                     )}
                     {item.arrow && <span className="tl-badge tl-badge-arrow">→</span>}
-                    {scene?.freeze?.enabled && scene.freeze.duration > 0 && (
+                    {primary && scene?.freeze?.enabled && scene.freeze.duration > 0 && (
                       <div
                         className="tl-freeze"
                         style={{

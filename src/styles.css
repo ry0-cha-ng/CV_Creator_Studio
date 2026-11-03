@@ -1804,6 +1804,11 @@ button.primary {
   background: #3f3a5e;
 }
 
+/* 同じシーンの中で、別のカットが始まる境目 */
+.tl-clip.is-cut-start {
+  border-left: 2px solid #c9ced4;
+}
+
 .tl-clip.is-selected,
 .tl-caption.is-selected,
 .tl-bgm.is-selected,

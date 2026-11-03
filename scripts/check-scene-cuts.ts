@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { usedSourceSpan } from '../shared/export-media';
-import { compositionBlocks, removeVideoAsset } from '../shared/guide';
+import { compositionBlocks, removeVideoAsset, reviewItems } from '../shared/guide';
 import {
   addCut,
+  assignClipToCut,
   canAddCut,
   moveCut,
   removeCut,
@@ -13,7 +14,9 @@ import {
 import {
   MAX_CUTS_PER_SCENE,
   PRIMARY_CUT_ID,
+  cutIdOfItem,
   isPrimaryItem,
+  missingExtraCuts,
   itemCrop,
   sceneClipsForExport,
   sceneCuts,
@@ -23,6 +26,7 @@ import {
   activeTimeline,
   applySceneCutDuration,
   buildTimeline,
+  cutOnlyItem,
   itemClip,
   sceneSpanOf,
   sceneTotalDuration,
@@ -272,6 +276,77 @@ const hookItems = (project: Project) => activeTimeline(project).items.filter((it
   const promotedThrow = promoted.scenes.find((scene) => scene.sceneKey === 'throw');
   assert.equal(promotedThrow?.clipId, 'clip-t2');
   assert.equal(promotedThrow?.extraCuts, undefined);
+}
+
+// ---- 詳細編集：つなぎ方・素材のドロップ ----
+{
+  const project = addCut(fixture(), 'hook', 0, { cutId: 'h2', clipId: 'clip-h2' });
+  const items = activeTimeline(project).items;
+  const h1 = items.findIndex((item) => item.sceneKey === 'hook' && !item.clipId);
+  const h2 = items.findIndex((item) => item.clipId === 'clip-h2');
+  assert.equal(cutOnlyItem(project, items, h1), false, 'シーンの最初の項目は transition を使う');
+  assert.equal(cutOnlyItem(project, items, h2), true, 'カット2は切り替えのみ');
+  assert.equal(cutOnlyItem(project, items, h2 + 1), false, '次のシーンの最初の項目は transition を使う');
+  assert.equal(cutIdOfItem(project, items[h1]!), PRIMARY_CUT_ID);
+  assert.equal(cutIdOfItem(project, items[h2]!), 'h2');
+
+  // カットが1本のシーンを分割した2つ目は、今までどおり transition を使う
+  const single = fixture();
+  const stand = activeTimeline(single).items.find((item) => item.sceneKey === 'stand')!;
+  const split = splitTimelineItemAt(activeTimeline(single), stand.id, stand.start + 1);
+  const second = split.items.findIndex((item, index) => item.sceneKey === 'stand' && split.items[index - 1]?.sceneKey === 'stand');
+  assert.ok(second > 0);
+  assert.equal(cutOnlyItem(single, split.items, second), false, '1本のシーンの分割は従来どおり');
+
+  // カット2を分割しても clipId を引き継ぐ
+  const cut2 = items[h2]!;
+  const splitCut = splitTimelineItemAt(activeTimeline(project), cut2.id, cut2.start + 0.5);
+  assert.equal(splitCut.items.filter((item) => item.clipId === 'clip-h2').length, 2, '分けた項目は同じ clipId');
+
+  // 素材（S4 のクリップ）をカット2へドロップすると、値だけを写す（クリップは共有しない）
+  const dropped = assignClipToCut(project, 'hook', 'h2', 'clip-throw');
+  const h2Clip = dropped.clips.find((clip) => clip.id === 'clip-h2');
+  assert.deepEqual(
+    { assetId: h2Clip?.assetId, in: h2Clip?.in, out: h2Clip?.out },
+    { assetId: 'main', in: 40, out: 43 },
+    'カット2のクリップに素材の値が写る',
+  );
+  assert.equal(dropped.scenes.find((scene) => scene.sceneKey === 'throw')?.clipId, 'clip-throw', 'S4 はそのまま');
+  near(sceneTotalDuration(dropped, 'hook'), 2 + 3, 'シーンの尺は合計（2秒＋3秒）');
+  near(dropped.templateParams.sceneDurations.hook ?? 0, 5, 'sceneDurations も合計');
+
+  // カット1へのドロップも、カット1のクリップへ値を写す
+  const droppedPrimary = assignClipToCut(project, 'hook', PRIMARY_CUT_ID, 'clip-stand');
+  const hookScene = droppedPrimary.scenes.find((scene) => scene.sceneKey === 'hook');
+  assert.equal(hookScene?.clipId, 'clip-hook', 'カット1のクリップの id は変わらない');
+  const hookClip = droppedPrimary.clips.find((clip) => clip.id === 'clip-hook');
+  assert.deepEqual({ in: hookClip?.in, out: hookClip?.out }, { in: 20, out: 23 });
+
+  // 詳細編集済みでも、そのシーンの項目だけが作り直される
+  const edited = { ...project, timelineEdited: true, timeline: activeTimeline(project) };
+  const editedDrop = assignClipToCut(edited, 'hook', 'h2', 'clip-throw');
+  const editedItems = activeTimeline(editedDrop).items;
+  near(editedItems.find((item) => item.clipId === 'clip-h2')?.duration ?? 0, 3, 'カット2の項目の尺');
+  near(editedItems.find((item) => item.sceneKey === 'stand')?.start ?? 0, 5, '後ろのシーンがずれる');
+}
+
+// ---- 最終確認 ----
+{
+  const single = fixture();
+  assert.equal(reviewItems(single).some((item) => item.id === 'scene-cuts'), false, 'カットがなければ項目を出さない');
+
+  const project = addCut(fixture(), 'aim', 0, { cutId: 'a2', clipId: 'clip-a2' });
+  const ok = reviewItems(project).find((item) => item.id === 'scene-cuts');
+  assert.equal(ok?.level, 'ok');
+  assert.deepEqual(missingExtraCuts(project), []);
+
+  const lost = { ...project, clips: project.clips.filter((clip) => clip.id !== 'clip-a2') };
+  assert.deepEqual(missingExtraCuts(lost), [{ sceneKey: 'aim', cutNumber: 2 }]);
+  const error = reviewItems(lost).find((item) => item.id === 'scene-cuts');
+  assert.equal(error?.level, 'error');
+  assert.equal(error?.step, 3);
+  assert.equal(error?.sceneKey, 'aim');
+  assert.match(error?.detail ?? '', /カット2の動画が見つかりません/);
 }
 
 console.log('check:scene-cuts ok');

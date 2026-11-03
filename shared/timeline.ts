@@ -194,6 +194,16 @@ export const sceneSpanOf = (
   };
 };
 
+/**
+ * 直前の項目と切り替えだけでつなぐか。カットが2本以上のシーンで、直前も同じシーンのとき。
+ * このときは項目の transition を使わない。
+ */
+export const cutOnlyItem = (project: Project, items: TimelineItem[], index: number): boolean => {
+  const item = items[index];
+  if (!item || index === 0 || items[index - 1]?.sceneKey !== item.sceneKey) return false;
+  return sceneCuts(project, item.sceneKey).length > 1;
+};
+
 /** カットが2本以上あるシーンのカット。1本なら null。 */
 const multiCuts = (project: Project, sceneKey: SceneKey): ResolvedCut[] | null => {
   const cuts = sceneCuts(project, sceneKey);

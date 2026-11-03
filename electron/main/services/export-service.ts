@@ -31,7 +31,7 @@ import type { PublishedExportRecord } from '../../../shared/published-snapshot';
 import type { PublishedSnapshot } from '../../../shared/schema/published';
 import { parseProject, type Project } from '../../../shared/schema/project';
 import { activeTimeline, SCENE_BAND } from '../../../shared/timeline';
-import { extraCutsOf, sceneClipsForExport } from '../../../shared/scene-cuts';
+import { extraCutsOf, missingExtraCuts, sceneClipsForExport } from '../../../shared/scene-cuts';
 import type { AudioTrack } from '../../../shared/schema/audio';
 import type { LibraryService } from './library-service';
 import {
@@ -605,14 +605,9 @@ export class ExportService {
       if (missing.length > 0) {
         throw new Error(`必須クリップが未設定です: ${missing.join(', ')}`);
       }
-      for (const scene of project.scenes) {
-        extraCutsOf(scene).forEach((cut, index) => {
-          const clip = project.clips.find((item) => item.id === cut.clipId);
-          const asset = project.assets.find((item) => item.id === clip?.assetId);
-          if (!clip || !asset) {
-            throw new Error(`${SCENE_BAND[scene.sceneKey]}のカット${index + 2}の動画が見つかりません`);
-          }
-        });
+      const [lostCut] = missingExtraCuts(project);
+      if (lostCut) {
+        throw new Error(`${SCENE_BAND[lostCut.sceneKey]}のカット${lostCut.cutNumber}の動画が見つかりません`);
       }
     }
     const missingLanguages: string[] = [];

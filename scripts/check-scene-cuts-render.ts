@@ -142,6 +142,13 @@ const main = async (): Promise<void> => {
     const boundary = Math.round(2 * FPS);
     const before = brightness(await still('hook-cut1', hookCuts, boundary - 3));
     const after = brightness(await still('hook-cut2', hookCuts, boundary + 3));
+    // 切れ目のフレームそのものに暗転（黒）が入らない。直前はカット1、直後はカット2の映像
+    const lastOfCut1 = brightness(await still('hook-cut1-last', hookCuts, boundary - 1));
+    const firstOfCut2 = brightness(await still('hook-cut2-first', hookCuts, boundary));
+    expect(
+      Math.abs(lastOfCut1 - before) < 8 && Math.abs(firstOfCut2 - after) < 8,
+      `S1 のカットの切れ目に暗転がない（直前 ${lastOfCut1.toFixed(0)}・直後 ${firstOfCut2.toFixed(0)}）`,
+    );
     expect(before < 80 && after > 150, `S1 のカットの切れ目で別の動画に切り替わる（${before.toFixed(0)} → ${after.toFixed(0)}）`);
 
     // ---- テロップ（S1）：映像を隠して、1本のシーンと同じフレームか

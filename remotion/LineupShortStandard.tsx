@@ -20,8 +20,8 @@ import {
   useVideoConfig,
 } from 'remotion';
 import type { CardFrameSlot } from '../shared/export-media';
-import { activeTimeline, bgmDurationForProject, bgmPlaybackGain, curveValue, playbackClip, playbackSceneKey, sceneDurations, sceneSpanOf } from '../shared/timeline';
-import { extraCutClipOfItem, hasExtraCuts, isPrimaryItem, itemCrop } from '../shared/scene-cuts';
+import { activeTimeline, bgmDurationForProject, bgmPlaybackGain, curveValue, cutOnlyItem, playbackClip, playbackSceneKey, sceneDurations, sceneSpanOf } from '../shared/timeline';
+import { extraCutClipOfItem, isPrimaryItem, itemCrop } from '../shared/scene-cuts';
 import type { TimelineItem } from '../shared/schema/timeline';
 import type { AudioTrack } from '../shared/schema/audio';
 import type { Language, Project, Scene, SceneKey } from '../shared/schema/project';
@@ -97,6 +97,12 @@ export type LineupShortProps = {
   /** 未指定は編集プレビュー（YouTube向けの高評価CTAを見せる）。 */
   deliveryPlatform?: CtaDeliveryPlatform;
 };
+
+/**
+ * 動画を表示の何秒前から読み込んでシークしておくか（Sequence の premountFor）。
+ * Player では、新しい <video> が最初のフレームを出すまで一瞬暗転するため。書き出しでは Remotion が使わない。
+ */
+const PREMOUNT_SEC = 1;
 
 const COLORS = {
   background: '#0F1923',
@@ -568,10 +574,10 @@ const SceneMedia = ({
       <Series.Sequence durationInFrames={Math.round(scene.freeze.at * fps)}>
         {video()}
       </Series.Sequence>
-      <Series.Sequence durationInFrames={Math.round(scene.freeze.duration * fps)}>
+      <Series.Sequence durationInFrames={Math.round(scene.freeze.duration * fps)} premountFor={PREMOUNT_SEC * fps}>
         <Freeze frame={0}>{video(Math.round((clip.in + scene.freeze.at) * fps))}</Freeze>
       </Series.Sequence>
-      <Series.Sequence durationInFrames={1_000_000}>
+      <Series.Sequence durationInFrames={1_000_000} premountFor={PREMOUNT_SEC * fps}>
         {video(Math.round((clip.in + scene.freeze.at) * fps))}
       </Series.Sequence>
     </Series>
@@ -2038,10 +2044,10 @@ const AimZoomFootage = ({
   return mount(
     <Series>
       <Series.Sequence durationInFrames={Math.round(freeze.at * fps)}>{video(origin)}</Series.Sequence>
-      <Series.Sequence durationInFrames={Math.round(freeze.duration * fps)}>
+      <Series.Sequence durationInFrames={Math.round(freeze.duration * fps)} premountFor={PREMOUNT_SEC * fps}>
         <Freeze frame={0}>{video(Math.round((clip.in + freeze.at) * fps))}</Freeze>
       </Series.Sequence>
-      <Series.Sequence durationInFrames={1_000_000}>
+      <Series.Sequence durationInFrames={1_000_000} premountFor={PREMOUNT_SEC * fps}>
         {video(Math.round((clip.in + freeze.at) * fps))}
       </Series.Sequence>
     </Series>,
@@ -2456,13 +2462,14 @@ export const LineupShortStandard = (props: LineupShortProps): ReactNode => {
     <AbsoluteFill>
       {items.map((item, index) => {
         const span = sceneSpanOf(items, index);
-        const cutOnly =
-          index > 0 && items[index - 1]?.sceneKey === item.sceneKey && hasExtraCuts(project, item.sceneKey);
+        const cutOnly = cutOnlyItem(project, items, index);
         return (
           <Sequence
             key={item.id}
             from={Math.round(item.start * fps)}
             durationInFrames={Math.max(1, Math.round(item.duration * fps))}
+            // 次の項目（カット・シーン）の動画を先に読み込んでおき、切り替わりの暗転を防ぐ
+            premountFor={PREMOUNT_SEC * fps}
           >
             <ClipTransition item={item} cutOnly={cutOnly}>
               <SceneContent {...props} sceneKey={item.sceneKey} item={item} sceneSpan={span} />

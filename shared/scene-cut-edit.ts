@@ -194,6 +194,43 @@ export const retargetCutVideo = (
   return rebuildSceneItems(next, sceneKey);
 };
 
+/**
+ * 既存のクリップ（素材の一覧から選んだもの）の動画と範囲を、カットへ写す。
+ * カットごとに専用のクリップを持つ決まりなので、選んだクリップは共有せず、値だけを写す。
+ */
+export const assignClipToCut = (
+  project: Project,
+  sceneKey: SceneKey,
+  cutId: string,
+  sourceClipId: string,
+): Project => {
+  const source = project.clips.find((clip) => clip.id === sourceClipId);
+  const cut = sceneCuts(project, sceneKey).find((entry) => entry.cutId === cutId);
+  if (!source || !cut || source.id === cut.clip.id) return project;
+  const values = { assetId: source.assetId, in: source.in, out: source.out };
+  let next: Project;
+  if (clipUsageCount(project, cut.clip.id) > 1) {
+    const clipId = randomId();
+    next = withScene(
+      { ...project, clips: [...project.clips, { id: clipId, ...values }] },
+      sceneKey,
+      (scene) =>
+        cutId === PRIMARY_CUT_ID
+          ? { ...scene, clipId }
+          : withExtras(
+              scene,
+              extraCutsOf(scene).map((entry) => (entry.id === cutId ? { ...entry, clipId } : entry)),
+            ),
+    );
+  } else {
+    next = {
+      ...project,
+      clips: project.clips.map((clip) => (clip.id === cut.clip.id ? { ...clip, ...values } : clip)),
+    };
+  }
+  return rebuildSceneItems(next, sceneKey);
+};
+
 /** カットの IN／OUT を変える。素材の範囲に収め、シーンの尺とタイムラインへ写す。 */
 export const setCutRange = (
   project: Project,

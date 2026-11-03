@@ -46,7 +46,7 @@ import {
   sceneDurations,
   sceneTotalDuration,
 } from './timeline';
-import { clipUsageCount, cutCrop, extraCutsOf } from './scene-cuts';
+import { clipUsageCount, cutCrop, extraCutsOf, missingExtraCuts } from './scene-cuts';
 import { configuredSceneOrder, sceneOrderLabel } from './video-structure';
 
 export const GUIDE_STEPS = [
@@ -235,6 +235,39 @@ export type ReviewItem = {
   detail: string;
   level: 'ok' | 'warn' | 'error' | 'info';
   step?: GuideStepId;
+  /** 直す手順で開くシーン（手順3 切り抜きなど）。 */
+  sceneKey?: SceneKey;
+};
+
+/** カット2以降の動画がそろっているか。カットを使っていないプロジェクトでは項目を出さない。 */
+const cutReview = (project: Project): ReviewItem[] => {
+  const order = configuredSceneOrder(project);
+  const cutScenes = project.scenes
+    .filter((scene) => order.includes(scene.sceneKey) && extraCutsOf(scene).length > 0)
+    .map((scene) => scene.sceneKey);
+  if (cutScenes.length === 0) return [];
+  const missing = missingExtraCuts(project).filter((entry) => cutScenes.includes(entry.sceneKey));
+  const label = 'カットの動画がそろっている';
+  if (missing.length === 0) {
+    return [
+      {
+        id: 'scene-cuts',
+        label,
+        detail: `${cutScenes.map((sceneKey) => SCENE_BAND[sceneKey]).join('・')} のカットを設定済み`,
+        level: 'ok',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'scene-cuts',
+      label,
+      detail: `${missing.map((entry) => `${SCENE_BAND[entry.sceneKey]}のカット${entry.cutNumber}`).join('・')}の動画が見つかりません`,
+      level: 'error',
+      step: 3,
+      sceneKey: missing[0]?.sceneKey,
+    },
+  ];
 };
 
 const s4Review = (project: Project): ReviewItem[] => {
@@ -376,6 +409,7 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
       level: missingScenes.length === 0 ? 'ok' : 'error',
       step: missingScenes.length === 0 ? undefined : 3,
     },
+    ...cutReview(project),
     {
       id: 'cards',
       label: 'カード用画像',

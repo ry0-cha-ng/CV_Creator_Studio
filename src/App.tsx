@@ -12,8 +12,9 @@ import {
 } from '../shared/guide';
 import type { AudioUsageRecord, ProjectSummary } from '../shared/ipc';
 import type { Project, SceneKey } from '../shared/schema/project';
-import { applyDemoDurationToProject, applySceneCutDuration, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
-import { clipUsageCount } from '../shared/scene-cuts';
+import { activeTimeline, applyDemoDurationToProject, applySceneCutDuration, cutItemsOf, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
+import { PRIMARY_CUT_ID, clipUsageCount, sceneCuts } from '../shared/scene-cuts';
+import { setCutRange } from '../shared/scene-cut-edit';
 import { useStudioStore, type SaveCommit } from './store';
 import { TimelinePanel } from './TimelinePanel';
 import { PreviewStage } from './PreviewStage';
@@ -63,6 +64,8 @@ export const App = () => {
   const store = useStudioStore();
   const [editingSceneKey, setEditingSceneKey] = useState<SceneKey | null>(null);
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
+  /** 範囲エディタで編集中のカット（カット2以降）。カット1・カットのないシーンは null。 */
+  const [editingCutId, setEditingCutId] = useState<string | null>(null);
   const [previewReveal, setPreviewReveal] = useState<'short' | 'card' | 'card45' | null>(null);
   const playerRef = useRef<PlayerRef>(null);
   const [projectToDelete, setProjectToDelete] = useState<ProjectSummary | null>(null);
@@ -386,8 +389,18 @@ export const App = () => {
     });
   };
 
-  const openSceneClipEditor = (sceneKey: SceneKey): void => {
+  const openSceneClipEditor = (sceneKey: SceneKey, cutId?: string): void => {
     if (!project) return;
+    if (cutId && cutId !== PRIMARY_CUT_ID) {
+      // カット2以降は専用のクリップを持つので、そのまま開く
+      const cut = sceneCuts(project, sceneKey).find((entry) => entry.cutId === cutId);
+      if (!cut) return;
+      setEditingCutId(cutId);
+      setEditingClipId(cut.clip.id);
+      setEditingSceneKey(sceneKey);
+      return;
+    }
+    setEditingCutId(null);
     const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
     const clip = project.clips.find((item) => item.id === scene?.clipId);
     if (!scene || !clip) return;
@@ -714,8 +727,10 @@ export const App = () => {
             project={project}
             sceneKey={editingSceneKey}
             clipId={editingClipId}
+            cutId={editingCutId ?? undefined}
             onChangeRange={(range) =>
               store.updateProject((current) => {
+                if (editingCutId) return setCutRange(current, editingSceneKey, editingCutId, range);
                 const target = current.clips.find((item) => item.id === editingClipId);
                 if (target) {
                   target.in = range.in;
@@ -1022,6 +1037,7 @@ const VideoClipEditor = ({
   project,
   sceneKey,
   clipId,
+  cutId,
   onChangeRange,
   onExtractStill,
   onClose,
@@ -1029,6 +1045,8 @@ const VideoClipEditor = ({
   project: Project;
   sceneKey: SceneKey;
   clipId: string;
+  /** カット2以降を編集するとき、そのカットの id。 */
+  cutId?: string;
   onChangeRange: (range: { in: number; out: number }) => void;
   onExtractStill: (role: CardStillRole, seconds: number) => void;
   onClose: () => void;
@@ -1041,7 +1059,12 @@ const VideoClipEditor = ({
   const asset = project.assets.find((item) => item.id === clip?.assetId);
   const duration = asset?.meta.duration ?? clip?.out ?? 0;
   const frameStep = 1 / project.templateParams.fps;
-  const targetDuration = sceneItemDuration(project, sceneKey);
+  const cutNumber = cutId ? sceneCuts(project, sceneKey).findIndex((cut) => cut.cutId === cutId) + 1 : 0;
+  /** 合わせる尺。カット2以降はそのカットの項目の尺。 */
+  const targetDuration = cutId
+    ? cutItemsOf(project, activeTimeline(project), sceneKey, cutId).reduce((sum, item) => sum + item.duration, 0) ||
+      (clip ? clip.out - clip.in : 0)
+    : sceneItemDuration(project, sceneKey);
   const [playhead, setPlayhead] = useState(clip?.in ?? 0);
 
   useEffect(() => {
@@ -1180,10 +1203,12 @@ const VideoClipEditor = ({
     <section className="clip-editor-inline" aria-label={`${sceneKey}の映像範囲エディタ`}>
         <header className="clip-editor-heading">
           <div>
-            <span className="eyebrow">{SCENE_BAND[sceneKey]}</span>
+            <span className="eyebrow">{cutNumber > 0 ? `${SCENE_BAND[sceneKey]} · カット${cutNumber}` : SCENE_BAND[sceneKey]}</span>
             <h2>映像から使用範囲を指定</h2>
             <p className="clip-editor-hint">
-              このシーンは {targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はシーン尺に合わせられます。
+              {cutNumber > 0
+                ? `このカットは ${targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はカットの尺に合わせられます。`
+                : `このシーンは ${targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はシーン尺に合わせられます。`}
             </p>
           </div>
           <button className="icon-button" aria-label="閉じる" onClick={onClose}>

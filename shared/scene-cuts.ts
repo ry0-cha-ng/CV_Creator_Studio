@@ -132,3 +132,24 @@ export const sceneClipsForExport = (project: Pick<Project, 'scenes' | 'clips'>):
   }
   return clips;
 };
+
+/** 項目のカットの id。カット1（と、カットのないシーン）は PRIMARY_CUT_ID。 */
+export const cutIdOfItem = (
+  project: Pick<Project, 'scenes'>,
+  item: Pick<TimelineItem, 'sceneKey' | 'clipId'>,
+): string => extraCutOfItem(project, item)?.id ?? PRIMARY_CUT_ID;
+
+/** カット2以降で、クリップか動画の素材が見つからないもの。cutNumber は画面の番号（2 始まり）。 */
+export const missingExtraCuts = (
+  project: Pick<Project, 'scenes' | 'clips' | 'assets'>,
+): Array<{ sceneKey: SceneKey; cutNumber: number }> => {
+  const missing: Array<{ sceneKey: SceneKey; cutNumber: number }> = [];
+  for (const scene of project.scenes) {
+    extraCutsOf(scene).forEach((cut, index) => {
+      const clip = project.clips.find((entry) => entry.id === cut.clipId);
+      const asset = project.assets.find((entry) => entry.id === clip?.assetId && entry.type === 'video');
+      if (!clip || !asset) missing.push({ sceneKey: scene.sceneKey, cutNumber: index + 2 });
+    });
+  }
+  return missing;
+};

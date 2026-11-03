@@ -4751,7 +4751,7 @@ export const ReviewStep = ({
 }: {
   project: Project;
   tracks: AudioTrack[];
-  onGoto: (step: GuideStepId) => void;
+  onGoto: (step: GuideStepId, sceneKey?: SceneKey) => void;
   onGate: (gate: () => void) => void;
 }) => {
   const items = reviewItems(project, tracks);
@@ -4995,7 +4995,7 @@ export const ReviewStep = ({
                   <span className="gd-review-detail">{item.detail}</span>
                 </span>
                 {item.step && item.level !== 'ok' && item.level !== 'info' && (
-                  <button type="button" className="gd-link" onClick={() => onGoto(item.step!)}>
+                  <button type="button" className="gd-link" onClick={() => onGoto(item.step!, item.sceneKey)}>
                     {guideStepNumber(item.step)} {FIX_STEP[item.step] ?? ''}で直す
                   </button>
                 )}
