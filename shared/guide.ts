@@ -41,9 +41,12 @@ import {
   buildTimeline,
   defaultBgmLevel,
   insertSceneItem,
+  rebuildSceneItems,
   removeSceneItems,
   sceneDurations,
+  sceneTotalDuration,
 } from './timeline';
+import { clipUsageCount, cutCrop, extraCutsOf, missingExtraCuts } from './scene-cuts';
 import { configuredSceneOrder, sceneOrderLabel } from './video-structure';
 
 export const GUIDE_STEPS = [
@@ -232,6 +235,39 @@ export type ReviewItem = {
   detail: string;
   level: 'ok' | 'warn' | 'error' | 'info';
   step?: GuideStepId;
+  /** 直す手順で開くシーン（手順3 切り抜きなど）。 */
+  sceneKey?: SceneKey;
+};
+
+/** カット2以降の動画がそろっているか。カットを使っていないプロジェクトでは項目を出さない。 */
+const cutReview = (project: Project): ReviewItem[] => {
+  const order = configuredSceneOrder(project);
+  const cutScenes = project.scenes
+    .filter((scene) => order.includes(scene.sceneKey) && extraCutsOf(scene).length > 0)
+    .map((scene) => scene.sceneKey);
+  if (cutScenes.length === 0) return [];
+  const missing = missingExtraCuts(project).filter((entry) => cutScenes.includes(entry.sceneKey));
+  const label = 'カットの動画がそろっている';
+  if (missing.length === 0) {
+    return [
+      {
+        id: 'scene-cuts',
+        label,
+        detail: `${cutScenes.map((sceneKey) => SCENE_BAND[sceneKey]).join('・')} のカットを設定済み`,
+        level: 'ok',
+      },
+    ];
+  }
+  return [
+    {
+      id: 'scene-cuts',
+      label,
+      detail: `${missing.map((entry) => `${SCENE_BAND[entry.sceneKey]}のカット${entry.cutNumber}`).join('・')}の動画が見つかりません`,
+      level: 'error',
+      step: 3,
+      sceneKey: missing[0]?.sceneKey,
+    },
+  ];
 };
 
 const s4Review = (project: Project): ReviewItem[] => {
@@ -373,6 +409,7 @@ export const reviewItems = (project: Project, tracks: AudioTrack[] = []): Review
       level: missingScenes.length === 0 ? 'ok' : 'error',
       step: missingScenes.length === 0 ? undefined : 3,
     },
+    ...cutReview(project),
     {
       id: 'cards',
       label: 'カード用画像',
@@ -1036,7 +1073,7 @@ export const retargetSceneVideo = (project: Project, sceneKey: SceneKey, assetId
   const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
   if (!asset || !scene) return project;
   const current = project.clips.find((clip) => clip.id === scene.clipId);
-  const shared = Boolean(current && project.scenes.filter((item) => item.clipId === current.id).length > 1);
+  const shared = Boolean(current && clipUsageCount(project, current.id) > 1);
   if (current && !shared && current.assetId === asset.id) return project;
 
   const next = structuredClone(project);
@@ -1101,8 +1138,27 @@ export const removeVideoAsset = (project: Project, assetId: string): Project => 
   next.assets = next.assets.filter((asset) => asset.id !== assetId);
   next.clips = next.clips.filter((clip) => clip.assetId !== assetId);
   next.stills = next.stills.filter((still) => still.assetId !== assetId);
+  const cutsChanged = new Set<SceneKey>();
   for (const scene of next.scenes) {
-    if (scene.clipId && removedClipIds.has(scene.clipId)) scene.clipId = undefined;
+    const extras = scene.extraCuts ?? [];
+    const kept = extras.filter((cut) => !removedClipIds.has(cut.clipId));
+    if (kept.length !== extras.length) cutsChanged.add(scene.sceneKey);
+    if (scene.clipId && removedClipIds.has(scene.clipId)) {
+      scene.clipId = undefined;
+      // カット1の動画が消えたら、残っているカットを繰り上げる
+      const promoted = extraCutsOf({ ...scene, extraCuts: kept })[0];
+      if (promoted) {
+        const crop = cutCrop(scene, promoted);
+        scene.clipId = promoted.clipId;
+        scene.cropCenterX = crop.cropCenterX;
+        scene.cropCenterY = crop.cropCenterY;
+        scene.cropZoom = crop.cropZoom;
+        kept.shift();
+        cutsChanged.add(scene.sceneKey);
+      }
+    }
+    if (kept.length > 0) scene.extraCuts = kept;
+    else delete scene.extraCuts;
   }
   for (const role of ['stand', 'aim', 'result'] as const) {
     const stillId = next.cardStills[role];
@@ -1114,7 +1170,9 @@ export const removeVideoAsset = (project: Project, assetId: string): Project => 
     next.thumbnail = rest;
   }
 
-  return assignClipsFromRoles(next);
+  let result = assignClipsFromRoles(next);
+  for (const sceneKey of cutsChanged) result = rebuildSceneItems(result, sceneKey);
+  return result;
 };
 
 /** S6 を外す。実戦デモの役割も外し、切り抜きが定点本体だけのときはその範囲も消す。 */
@@ -1292,9 +1350,8 @@ export const compositionBlocks = (
     }));
   }
   return configuredSceneOrder(project).map((sceneKey) => {
-    const item = timeline.items.find((entry) => entry.sceneKey === sceneKey);
     const skipped = sceneKey === 'demo' && !sceneHasRange(project, 'demo');
-    const duration = skipped ? 0 : (item?.duration ?? sceneDurations(project)[sceneKey]);
+    const duration = skipped ? 0 : sceneTotalDuration(project, sceneKey);
     const auto =
       sceneKey === 'card' ||
       (sceneKey === 'loop' && !sceneHasRange(project, 'loop')) ||
@@ -1303,27 +1360,17 @@ export const compositionBlocks = (
   });
 };
 
-export const sceneGuideCopy = (
-  project: Project,
-  sceneKey: SceneKey,
-): { title: string; body: string; target: number; min: number; max: number } => {
-  const table: Partial<Record<SceneKey, { title: string; body: string; target: number; min: number; max: number }>> = {
-    hook: { title: 'S1 フック', body: '着弾・キルの瞬間', target: 4, min: 1.5, max: 5 },
-    stand: { title: 'S2 立ち位置', body: '立ち位置と周りの目印', target: 3, min: 2, max: 4 },
-    aim: { title: 'S3 狙い', body: '照準を合わせてから投げる直前まで', target: 4, min: 3, max: 5 },
-    throw: { title: 'S4 発動', body: '投げてから着弾・発動まで', target: 3, min: 2, max: 4 },
-    card: { title: 'S5 カード', body: '完成カードを全画面表示。秒数だけ変えられます', target: 2.5, min: 1, max: 5 },
-    demo: { title: 'S6 デモ', body: '実戦でこの定点を使った場面。なくても進めます', target: 11.5, min: 6, max: 12 },
-    loop: { title: 'S7 ループ', body: 'S1 の開始直前。終了は S1 の in より 0.01 秒前。別テイクにもできます', target: 2, min: 1.5, max: 3 },
+export const sceneGuideCopy = (sceneKey: SceneKey): { title: string; body: string } => {
+  const table: Partial<Record<SceneKey, { title: string; body: string }>> = {
+    hook: { title: 'S1 フック', body: '着弾・キルの瞬間' },
+    stand: { title: 'S2 立ち位置', body: '立ち位置と周りの目印' },
+    aim: { title: 'S3 狙い', body: '照準を合わせてから投げる直前まで' },
+    throw: { title: 'S4 発動', body: '投げてから着弾・発動まで' },
+    card: { title: 'S5 カード', body: '完成カードを全画面表示。秒数だけ変えられます' },
+    demo: { title: 'S6 デモ', body: '実戦でこの定点を使った場面。なくても進めます' },
+    loop: { title: 'S7 ループ', body: 'S1 の開始直前。終了は S1 の in より 0.01 秒前。別テイクにもできます' },
   };
-  const base = table[sceneKey] ?? { title: sceneKey, body: '', target: 2, min: 0.5, max: 30 };
-  const target = sceneDurations(project)[sceneKey];
-  return {
-    ...base,
-    target,
-    min: Math.min(base.min, target),
-    max: Math.max(base.max, target),
-  };
+  return table[sceneKey] ?? { title: sceneKey, body: '' };
 };
 
 export const defaultPostDate = (): string => {

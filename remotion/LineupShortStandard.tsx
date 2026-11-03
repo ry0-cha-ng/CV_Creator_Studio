@@ -20,7 +20,8 @@ import {
   useVideoConfig,
 } from 'remotion';
 import type { CardFrameSlot } from '../shared/export-media';
-import { activeTimeline, bgmDurationForProject, bgmPlaybackGain, curveValue, playbackClip, playbackSceneKey, sceneDurations } from '../shared/timeline';
+import { activeTimeline, bgmDurationForProject, bgmPlaybackGain, curveValue, cutOnlyItem, playbackClip, playbackSceneKey, sceneDurations, sceneSpanOf } from '../shared/timeline';
+import { extraCutClipOfItem, isPrimaryItem, itemCrop } from '../shared/scene-cuts';
 import type { TimelineItem } from '../shared/schema/timeline';
 import type { AudioTrack } from '../shared/schema/audio';
 import type { Language, Project, Scene, SceneKey } from '../shared/schema/project';
@@ -96,6 +97,12 @@ export type LineupShortProps = {
   /** 未指定は編集プレビュー（YouTube向けの高評価CTAを見せる）。 */
   deliveryPlatform?: CtaDeliveryPlatform;
 };
+
+/**
+ * 動画を表示の何秒前から読み込んでシークしておくか（Sequence の premountFor）。
+ * Player では、新しい <video> が最初のフレームを出すまで一瞬暗転するため。書き出しでは Remotion が使わない。
+ */
+const PREMOUNT_SEC = 1;
 
 const COLORS = {
   background: '#0F1923',
@@ -445,6 +452,8 @@ const SceneMedia = ({
     item?.layout ??
     scene.layout916;
   const clip = (() => {
+    const cutClip = item ? extraCutClipOfItem(project, item) : undefined;
+    if (cutClip) return cutClip;
     if (item?.sceneKey === 'loop') {
       const resolved = playbackClip(project, 'loop');
       if (resolved) return resolved;
@@ -565,10 +574,10 @@ const SceneMedia = ({
       <Series.Sequence durationInFrames={Math.round(scene.freeze.at * fps)}>
         {video()}
       </Series.Sequence>
-      <Series.Sequence durationInFrames={Math.round(scene.freeze.duration * fps)}>
+      <Series.Sequence durationInFrames={Math.round(scene.freeze.duration * fps)} premountFor={PREMOUNT_SEC * fps}>
         <Freeze frame={0}>{video(Math.round((clip.in + scene.freeze.at) * fps))}</Freeze>
       </Series.Sequence>
-      <Series.Sequence durationInFrames={1_000_000}>
+      <Series.Sequence durationInFrames={1_000_000} premountFor={PREMOUNT_SEC * fps}>
         {video(Math.round((clip.in + scene.freeze.at) * fps))}
       </Series.Sequence>
     </Series>
@@ -643,7 +652,12 @@ const Caption = ({
         })
       : 1;
   const styles: Record<typeof kind, CSSProperties> = {
-    hook: { top: 230, fontSize: 88, lineHeight: 1.4, textAlign: 'center' },
+    hook: {
+      top: LAYOUT_FOCUS.hookCaption.top,
+      fontSize: LAYOUT_FOCUS.hookCaption.fontSize,
+      lineHeight: LAYOUT_FOCUS.hookCaption.lineHeight,
+      textAlign: 'center',
+    },
     step: { top: 1240, fontSize: 60, lineHeight: 1.12, textAlign: 'left' },
     throw: {
       top: 1260,
@@ -656,7 +670,7 @@ const Caption = ({
   };
   const floating = kind !== 'throw';
   // HOOK はセーフゾーン幅に縛らず、画面（1080）中央に置く
-  const box = kind === 'hook' ? { left: 0, width: 1080 } : { left: 72, width: 840 };
+  const box = kind === 'hook' ? { left: 0, width: LAYOUT_FOCUS.hookCaption.width } : { left: 72, width: 840 };
   return (
     <div
       style={{
@@ -2035,10 +2049,10 @@ const AimZoomFootage = ({
   return mount(
     <Series>
       <Series.Sequence durationInFrames={Math.round(freeze.at * fps)}>{video(origin)}</Series.Sequence>
-      <Series.Sequence durationInFrames={Math.round(freeze.duration * fps)}>
+      <Series.Sequence durationInFrames={Math.round(freeze.duration * fps)} premountFor={PREMOUNT_SEC * fps}>
         <Freeze frame={0}>{video(Math.round((clip.in + freeze.at) * fps))}</Freeze>
       </Series.Sequence>
-      <Series.Sequence durationInFrames={1_000_000}>
+      <Series.Sequence durationInFrames={1_000_000} premountFor={PREMOUNT_SEC * fps}>
         {video(Math.round((clip.in + freeze.at) * fps))}
       </Series.Sequence>
     </Series>,
@@ -2053,7 +2067,13 @@ const SceneContent = ({
   useOriginalMedia,
   item,
   deliveryPlatform,
-}: LineupShortProps & { sceneKey: SceneKey; item?: TimelineItem }): ReactNode => {
+  sceneSpan,
+}: LineupShortProps & {
+  sceneKey: SceneKey;
+  item?: TimelineItem;
+  /** 同じシーンが連続する区間。テロップ・CTA はこの区間の時間で動かす。 */
+  sceneSpan?: { duration: number; offset: number };
+}): ReactNode => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const accent = project.templateParams.accent;
@@ -2082,6 +2102,13 @@ const SceneContent = ({
     ? resolveVariables(captionTextFor(caption, language, 'video'), project, language)
     : '';
   const focus = scene.layout916 === 'focus';
+  // カット2以降は、そのカットのクロップで描き、ズーム・フリーズ・照準マーカーは付けない
+  const primary = isPrimaryItem(project, item);
+  const mediaScene: Scene = primary
+    ? sourceScene
+    : { ...sourceScene, ...itemCrop(project, sourceScene, item), zoom: undefined, freeze: undefined };
+  const sceneDurationSec = sceneSpan?.duration ?? item?.duration ?? 0;
+  const sceneOffsetFrames = Math.round((sceneSpan?.offset ?? 0) * fps);
   const sourceClip = playbackClip(project, sceneKey);
   const sourceAsset = project.assets.find((entry) => entry.id === sourceClip?.assetId);
   const focusFrame = focusFrameOf(sourceAsset?.meta.width, sourceAsset?.meta.height);
@@ -2104,14 +2131,15 @@ const SceneContent = ({
       {!project.timelineMix?.hideVideo && (
         <SceneMedia
           project={project}
-          scene={sourceScene}
+          scene={mediaScene}
           mediaBaseUrl={mediaBaseUrl}
           useOriginalMedia={useOriginalMedia}
           item={item}
         />
       )}
       {item && <ArrowOverlay item={item} focus={focus} />}
-      {aimMarkerVisibleAt(scene.aimMarker, sceneSourceTime(frame, fps, sourceScene, item)) &&
+      {primary &&
+        aimMarkerVisibleAt(scene.aimMarker, sceneSourceTime(frame, fps, sourceScene, item)) &&
         scene.aimMarker &&
         (!focusMarker || focusMarker.inside) &&
         (() => {
@@ -2196,6 +2224,7 @@ const SceneContent = ({
           {LABELS[sceneKey]?.[language]}
         </div>
       )}
+      <SceneTime offsetFrames={sceneOffsetFrames}>
       {captionText && !project.timelineMix?.hideCaptions && (
         <Caption
           text={captionText}
@@ -2237,11 +2266,12 @@ const SceneContent = ({
         </div>
       )}
       {like && (
-        <S4LikeCtaBlock project={project} language={language} durationSec={item?.duration ?? 0} />
+        <S4LikeCtaBlock project={project} language={language} durationSec={sceneDurationSec} />
       )}
       {sceneKey === 'throw' && ctaDesign === 's4-block' && !like && !project.timelineMix?.hideCaptions && (
-        <S4CtaBlock project={project} language={language} durationSec={item?.duration ?? 0} focus={focus} />
+        <S4CtaBlock project={project} language={language} durationSec={sceneDurationSec} focus={focus} />
       )}
+      </SceneTime>
       {sceneKey === 'loop' && ctaDesign === 's7-band' && !project.timelineMix?.hideCaptions &&
         (() => {
           const cta = project.captions.find((caption) => caption.id === 'cta');
@@ -2358,15 +2388,32 @@ const YtShortsUiGuide = (): ReactNode => {
   );
 };
 
+/**
+ * 同じシーンが続く項目の中で、重ねる要素の時刻をシーンの先頭からに揃える。
+ * 項目の先頭ごとにテロップの入り・CTA の出るタイミングがやり直されないようにする。
+ */
+const SceneTime = ({ offsetFrames, children }: { offsetFrames: number; children: ReactNode }): ReactNode =>
+  offsetFrames > 0 ? (
+    <Sequence from={-offsetFrames} layout="none" name="scene-time">
+      {children}
+    </Sequence>
+  ) : (
+    children
+  );
+
 const ClipTransition = ({
   item,
+  cutOnly = false,
   children,
 }: {
   item: TimelineItem;
+  /** 同じシーンのカットの間。トランジションに関係なく切り替えだけにする。 */
+  cutOnly?: boolean;
   children: ReactNode;
 }): ReactNode => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  if (cutOnly) return children;
   if (item.transition === 'fade') {
     const opacity = interpolate(frame, [0, 0.25 * fps], [0, 1], {
       extrapolateLeft: 'clamp',
@@ -2415,19 +2462,26 @@ export const LineupShortStandard = (props: LineupShortProps): ReactNode => {
   const { project } = props;
   const { fps } = useVideoConfig();
   const tracks = props.audioTracks ?? (props.audioTrack ? [props.audioTrack] : []);
+  const items = activeTimeline(project).items;
   return (
     <AbsoluteFill>
-      {activeTimeline(project).items.map((item) => (
-        <Sequence
-          key={item.id}
-          from={Math.round(item.start * fps)}
-          durationInFrames={Math.max(1, Math.round(item.duration * fps))}
-        >
-          <ClipTransition item={item}>
-            <SceneContent {...props} sceneKey={item.sceneKey} item={item} />
-          </ClipTransition>
-        </Sequence>
-      ))}
+      {items.map((item, index) => {
+        const span = sceneSpanOf(items, index);
+        const cutOnly = cutOnlyItem(project, items, index);
+        return (
+          <Sequence
+            key={item.id}
+            from={Math.round(item.start * fps)}
+            durationInFrames={Math.max(1, Math.round(item.duration * fps))}
+            // 次の項目（カット・シーン）の動画を先に読み込んでおき、切り替わりの暗転を防ぐ
+            premountFor={PREMOUNT_SEC * fps}
+          >
+            <ClipTransition item={item} cutOnly={cutOnly}>
+              <SceneContent {...props} sceneKey={item.sceneKey} item={item} sceneSpan={span} />
+            </ClipTransition>
+          </Sequence>
+        );
+      })}
       <BgmAudio
         project={project}
         audioTrack={props.audioTrack ?? tracks.find((track) => track.kind === 'bgm')}

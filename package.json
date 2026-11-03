@@ -30,6 +30,8 @@
     "check:focus": "npx --yes tsx scripts/check-focus-layout.ts",
     "check:annotation-style": "npx --yes tsx scripts/check-annotation-style.ts",
     "check:video-structure": "npx --yes tsx scripts/check-video-structure.ts",
+    "check:scene-cuts": "npx --yes tsx scripts/check-scene-cuts.ts",
+    "check:scene-cuts-render": "npx --yes tsx --tsconfig tsconfig.node.json scripts/check-scene-cuts-render.ts",
     "package:win": "npm run build && electron-builder --win nsis",
     "package:mac": "npm run build && electron-builder --mac dmg"
   },

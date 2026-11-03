@@ -1,4 +1,5 @@
 import { MONT_LATIN, ZEN_LATIN } from './card-title-latin-widths';
+import { LAYOUT_FOCUS } from './layout-focus';
 import { MAP_NAMES_JA } from './valorant-labels';
 import { captionTextFor, type Language, type Project } from './schema/project';
 import { hookFrameRequest } from './thumbnail';
@@ -26,7 +27,8 @@ export const THUMB_FOCUS = {
     right: 990,
     maxLines: 3,
     align: 'center',
-    en: { family: 'Montserrat', weight: 900, size: 96, min: 76, lineHeight: 1.08, uppercase: true },
+    // 76px では 900px 幅が 11.8em。動画は 1080px × 88px で 12.3em まで1行なので、そこまで縮める。
+    en: { family: 'Montserrat', weight: 900, size: 96, min: 72, lineHeight: 1.08, uppercase: true },
     ja: { family: 'Zen Kaku Gothic New', weight: 900, size: 84, min: 68, lineHeight: 1.15 },
     shrinkStep: 2,
     stroke: { color: 'rgba(15,25,35,0.95)', outside: 7 },
@@ -263,30 +265,53 @@ const runsOf = (glyphs: Glyph[]): ThumbHookRun[] => {
   return runs;
 };
 
-const layoutHook = (text: string, language: Language, fontSize: number): ThumbHookRun[][] => {
-  const spec = language === 'en' ? THUMB_FOCUS.hook.en : THUMB_FOCUS.hook.ja;
+const THUMB_HOOK_WIDTH = THUMB_FOCUS.hook.right - THUMB_FOCUS.hook.left;
+
+const layoutHook = (
+  text: string,
+  language: Language,
+  fontSize: number,
+  maxWidth: number,
+  uppercase: boolean,
+): ThumbHookRun[][] => {
   const table = language === 'en' ? MONT_LATIN : ZEN_LATIN;
-  const uppercase = 'uppercase' in spec && spec.uppercase === true;
   const paragraphs = text.replaceAll('\r\n', '\n').split('\n');
   const lines: ThumbHookRun[][] = [];
   for (const paragraph of paragraphs) {
-    for (const row of wrapGlyphs(glyphsOf(paragraph, uppercase), fontSize, THUMB_FOCUS.hook.right - THUMB_FOCUS.hook.left, table)) {
+    for (const row of wrapGlyphs(glyphsOf(paragraph, uppercase), fontSize, maxWidth, table)) {
       lines.push(runsOf(row));
     }
   }
   return lines;
 };
 
-/** 3行に収まるまで縮める。最小でも収まらなければ3行で切り、warning を返す。 */
+/** 動画フックと同じ文字枠で、何行になるか。動画は英語を大文字にしない。 */
+const videoHookLineCount = (text: string, language: Language): number =>
+  layoutHook(
+    text,
+    language,
+    LAYOUT_FOCUS.hookCaption.fontSize,
+    LAYOUT_FOCUS.hookCaption.width,
+    false,
+  ).length;
+
+/**
+ * 動画で収まる行数を超えない最大の文字サイズ。
+ * 短い見出しはデザインサイズのまま。3行を超えるときだけ切り、warning を返す。
+ */
 export const fitFocusHook = (text: string, language: Language): ThumbHookFit => {
   const spec = language === 'en' ? THUMB_FOCUS.hook.en : THUMB_FOCUS.hook.ja;
   const trimmed = text.replaceAll('\r\n', '\n');
   if (!trimmed.trim()) return { fontSize: spec.size, lines: [], warning: false };
+  const uppercase = 'uppercase' in spec && spec.uppercase === true;
+  const target = Math.min(THUMB_FOCUS.hook.maxLines, Math.max(1, videoHookLineCount(trimmed, language)));
+  const draw = (fontSize: number): ThumbHookRun[][] =>
+    layoutHook(trimmed, language, fontSize, THUMB_HOOK_WIDTH, uppercase);
   for (let fontSize = spec.size; fontSize >= spec.min; fontSize -= THUMB_FOCUS.hook.shrinkStep) {
-    const lines = layoutHook(trimmed, language, fontSize);
-    if (lines.length <= THUMB_FOCUS.hook.maxLines) return { fontSize, lines, warning: false };
+    const lines = draw(fontSize);
+    if (lines.length <= target) return { fontSize, lines, warning: false };
   }
-  const lines = layoutHook(trimmed, language, spec.min);
+  const lines = draw(spec.min);
   return {
     fontSize: spec.min,
     lines: lines.slice(0, THUMB_FOCUS.hook.maxLines),

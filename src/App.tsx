@@ -12,7 +12,9 @@ import {
 } from '../shared/guide';
 import type { AudioUsageRecord, ProjectSummary } from '../shared/ipc';
 import type { Project, SceneKey } from '../shared/schema/project';
-import { applyDemoDurationToProject, applySceneCutDuration, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
+import { activeTimeline, applyDemoDurationToProject, applySceneCutDuration, cutItemsOf, rangeForSceneDuration, sceneItemDuration, SCENE_BAND } from '../shared/timeline';
+import { PRIMARY_CUT_ID, clipUsageCount, sceneCuts } from '../shared/scene-cuts';
+import { setCutRange } from '../shared/scene-cut-edit';
 import { useStudioStore, type SaveCommit } from './store';
 import { TimelinePanel } from './TimelinePanel';
 import { PreviewStage } from './PreviewStage';
@@ -44,12 +46,29 @@ const EDITABLE_SCENES: SceneKey[] = ['hook', 'stand', 'aim', 'throw', 'demo'];
 const CARD_STILL_ROLES = ['stand', 'aim', 'result'] as const;
 type CardStillRole = (typeof CARD_STILL_ROLES)[number];
 
+/** 最後の編集からこの間なにも変わらなければ、自動保存を始める。 */
+const AUTOSAVE_IDLE_MS = 500;
+const AUTOSAVE_BACKUP_MS = 30_000;
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const persistProject = async (revision: number, sent: Project): Promise<SaveCommit> => {
-  const saved = await window.studio.saveProject(sent);
-  return useStudioStore.getState().acceptSavedProject(revision, sent, saved);
+let persistTail: Promise<void> = Promise.resolve();
+
+const persistProject = (revision: number, sent: Project): Promise<SaveCommit> => {
+  const run = persistTail.then(async () => {
+    const state = useStudioStore.getState();
+    // 同じプロジェクトの新しい編集が来ているときは、古いスナップショットを書かない。
+    // 別プロジェクトへ移ったあとは、離れる前の内容をまだ書く。
+    if (state.project?.id === sent.id && state.projectRevision !== revision) return 'stale';
+    const saved = await window.studio.saveProject(sent);
+    return useStudioStore.getState().acceptSavedProject(revision, sent, saved);
+  });
+  persistTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 };
 
 const mediaUrl = (path: string): string =>
@@ -62,6 +81,8 @@ export const App = () => {
   const store = useStudioStore();
   const [editingSceneKey, setEditingSceneKey] = useState<SceneKey | null>(null);
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
+  /** 範囲エディタで編集中のカット（カット2以降）。カット1・カットのないシーンは null。 */
+  const [editingCutId, setEditingCutId] = useState<string | null>(null);
   const [previewReveal, setPreviewReveal] = useState<'short' | 'card' | 'card45' | null>(null);
   const playerRef = useRef<PlayerRef>(null);
   const [projectToDelete, setProjectToDelete] = useState<ProjectSummary | null>(null);
@@ -71,6 +92,11 @@ export const App = () => {
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [guideScene, setGuideScene] = useState<SceneKey>('hook');
   const playbackFrameRef = useRef(0);
+  const saveTimerRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const lastChangeAtRef = useRef(0);
+  const autosaveMountedRef = useRef(true);
+  const scheduleAutosaveRef = useRef<() => void>(() => undefined);
   const [audioUsage, setAudioUsage] = useState<AudioUsageRecord[]>([]);
   const [defaultBgmTrackId, setDefaultBgmTrackId] = useState<string | null>(null);
   const [area, setArea] = useState<'create' | 'review' | 'detail'>('create');
@@ -121,35 +147,73 @@ export const App = () => {
     })();
   }, [workspace]);
 
+  const clearAutosaveTimer = (): void => {
+    if (saveTimerRef.current != null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  };
+
+  const runAutosave = async (): Promise<void> => {
+    if (saveInFlightRef.current) return;
+    const state = useStudioStore.getState();
+    const toSave = state.project;
+    if (!toSave || !state.dirty) return;
+    if (Date.now() - lastChangeAtRef.current < AUTOSAVE_IDLE_MS - 50) {
+      scheduleAutosaveRef.current();
+      return;
+    }
+    const revision = state.projectRevision;
+    saveInFlightRef.current = true;
+    try {
+      const result = await persistProject(revision, toSave);
+      if (result === 'saved') await refreshProjects();
+    } catch (saveError) {
+      useStudioStore.getState().setError(`自動保存に失敗しました: ${errorMessage(saveError)}`);
+    } finally {
+      saveInFlightRef.current = false;
+      if (!autosaveMountedRef.current) return;
+      const latest = useStudioStore.getState();
+      if (latest.dirty && latest.project && latest.projectRevision !== revision) {
+        scheduleAutosaveRef.current();
+      }
+    }
+  };
+
+  const scheduleAutosave = (): void => {
+    clearAutosaveTimer();
+    const wait = Math.max(0, AUTOSAVE_IDLE_MS - (Date.now() - lastChangeAtRef.current));
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void runAutosave();
+    }, wait);
+  };
+  scheduleAutosaveRef.current = scheduleAutosave;
+
+  useEffect(() => {
+    autosaveMountedRef.current = true;
+    return () => {
+      autosaveMountedRef.current = false;
+      clearAutosaveTimer();
+    };
+  }, []);
+
   useEffect(() => {
     if (!project || !dirty) return;
-    const revision = useStudioStore.getState().projectRevision;
-    const timer = window.setTimeout(async () => {
-      const state = useStudioStore.getState();
-      const toSave = state.project;
-      if (!toSave || state.projectRevision !== revision) return;
-      try {
-        const result = await persistProject(revision, toSave);
-        if (result === 'saved') await refreshProjects();
-      } catch (saveError) {
-        useStudioStore.getState().setError(`自動保存に失敗しました: ${errorMessage(saveError)}`);
-      }
-    }, 700);
-    return () => window.clearTimeout(timer);
+    lastChangeAtRef.current = Date.now();
+    scheduleAutosaveRef.current();
+    return () => {
+      clearAutosaveTimer();
+    };
   }, [project, dirty]);
 
   useEffect(() => {
-    const timer = window.setInterval(async () => {
+    const timer = window.setInterval(() => {
       const state = useStudioStore.getState();
-      const toSave = state.project;
-      if (!toSave || !state.dirty) return;
-      const revision = state.projectRevision;
-      try {
-        await persistProject(revision, toSave);
-      } catch (saveError) {
-        useStudioStore.getState().setError(`定期保存に失敗しました: ${errorMessage(saveError)}`);
-      }
-    }, 30_000);
+      if (!state.project || !state.dirty) return;
+      if (saveInFlightRef.current || saveTimerRef.current != null) return;
+      scheduleAutosaveRef.current();
+    }, AUTOSAVE_BACKUP_MS);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -385,13 +449,23 @@ export const App = () => {
     });
   };
 
-  const openSceneClipEditor = (sceneKey: SceneKey): void => {
+  const openSceneClipEditor = (sceneKey: SceneKey, cutId?: string): void => {
     if (!project) return;
+    if (cutId && cutId !== PRIMARY_CUT_ID) {
+      // カット2以降は専用のクリップを持つので、そのまま開く
+      const cut = sceneCuts(project, sceneKey).find((entry) => entry.cutId === cutId);
+      if (!cut) return;
+      setEditingCutId(cutId);
+      setEditingClipId(cut.clip.id);
+      setEditingSceneKey(sceneKey);
+      return;
+    }
+    setEditingCutId(null);
     const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
     const clip = project.clips.find((item) => item.id === scene?.clipId);
     if (!scene || !clip) return;
 
-    const usageCount = project.scenes.filter((item) => item.clipId === clip.id).length;
+    const usageCount = clipUsageCount(project, clip.id);
     const nextClipId = usageCount > 1 ? crypto.randomUUID() : clip.id;
     store.updateProject((current) => {
       if (usageCount > 1) {
@@ -713,8 +787,10 @@ export const App = () => {
             project={project}
             sceneKey={editingSceneKey}
             clipId={editingClipId}
+            cutId={editingCutId ?? undefined}
             onChangeRange={(range) =>
               store.updateProject((current) => {
+                if (editingCutId) return setCutRange(current, editingSceneKey, editingCutId, range);
                 const target = current.clips.find((item) => item.id === editingClipId);
                 if (target) {
                   target.in = range.in;
@@ -1021,6 +1097,7 @@ const VideoClipEditor = ({
   project,
   sceneKey,
   clipId,
+  cutId,
   onChangeRange,
   onExtractStill,
   onClose,
@@ -1028,6 +1105,8 @@ const VideoClipEditor = ({
   project: Project;
   sceneKey: SceneKey;
   clipId: string;
+  /** カット2以降を編集するとき、そのカットの id。 */
+  cutId?: string;
   onChangeRange: (range: { in: number; out: number }) => void;
   onExtractStill: (role: CardStillRole, seconds: number) => void;
   onClose: () => void;
@@ -1040,7 +1119,12 @@ const VideoClipEditor = ({
   const asset = project.assets.find((item) => item.id === clip?.assetId);
   const duration = asset?.meta.duration ?? clip?.out ?? 0;
   const frameStep = 1 / project.templateParams.fps;
-  const targetDuration = sceneItemDuration(project, sceneKey);
+  const cutNumber = cutId ? sceneCuts(project, sceneKey).findIndex((cut) => cut.cutId === cutId) + 1 : 0;
+  /** 合わせる尺。カット2以降はそのカットの項目の尺。 */
+  const targetDuration = cutId
+    ? cutItemsOf(project, activeTimeline(project), sceneKey, cutId).reduce((sum, item) => sum + item.duration, 0) ||
+      (clip ? clip.out - clip.in : 0)
+    : sceneItemDuration(project, sceneKey);
   const [playhead, setPlayhead] = useState(clip?.in ?? 0);
 
   useEffect(() => {
@@ -1179,10 +1263,12 @@ const VideoClipEditor = ({
     <section className="clip-editor-inline" aria-label={`${sceneKey}の映像範囲エディタ`}>
         <header className="clip-editor-heading">
           <div>
-            <span className="eyebrow">{SCENE_BAND[sceneKey]}</span>
+            <span className="eyebrow">{cutNumber > 0 ? `${SCENE_BAND[sceneKey]} · カット${cutNumber}` : SCENE_BAND[sceneKey]}</span>
             <h2>映像から使用範囲を指定</h2>
             <p className="clip-editor-hint">
-              このシーンは {targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はシーン尺に合わせられます。
+              {cutNumber > 0
+                ? `このカットは ${targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はカットの尺に合わせられます。`
+                : `このシーンは ${targetDuration.toFixed(1)} 秒です。開始位置を決めれば、終了位置はシーン尺に合わせられます。`}
             </p>
           </div>
           <button className="icon-button" aria-label="閉じる" onClick={onClose}>

@@ -1,5 +1,5 @@
 import type { Project, SceneKey } from './schema/project';
-import { activeTimeline, playbackClip } from './timeline';
+import { activeTimeline, itemClip } from './timeline';
 
 export const OUTPUT_WIDTH = 1080;
 export const OUTPUT_HEIGHT = 1920;
@@ -65,7 +65,7 @@ export const usedSourceSpan = (
         ]
       : [{ slot: 'aim', sceneKey: 'aim' }];
   for (const item of activeTimeline(project).items) {
-    const clip = playbackClip(project, item.sceneKey);
+    const clip = itemClip(project, item);
     const speed = item.speed ?? 1;
     const offset = item.sourceOffset ?? 0;
     if (clip?.assetId === assetId) {

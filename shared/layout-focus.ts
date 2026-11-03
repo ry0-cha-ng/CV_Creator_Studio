@@ -30,6 +30,11 @@ export const LAYOUT_FOCUS = {
   },
   hookStroke: { color: 'rgba(15,25,35,0.95)', outside: 7 },
   hookShadow: '0 6px 18px rgba(0,0,0,0.65)',
+  /**
+   * 動画フックの文字枠。画面幅いっぱいに 88px。
+   * サムネイルは、この枠で1行に収まる文を折り返さない。
+   */
+  hookCaption: { top: 230, fontSize: 88, lineHeight: 1.4, width: 1080 },
   signatureShadow: 'drop-shadow(0 2px 10px rgba(0,0,0,0.75))',
   cvCtaPanel: { bg: 'rgba(6,9,13,0.72)', radius: 16 },
   signatureYWhenCvCtaOverlaps: 1440,

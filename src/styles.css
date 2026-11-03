@@ -1804,6 +1804,11 @@ button.primary {
   background: #3f3a5e;
 }
 
+/* 同じシーンの中で、別のカットが始まる境目 */
+.tl-clip.is-cut-start {
+  border-left: 2px solid #c9ced4;
+}
+
 .tl-clip.is-selected,
 .tl-caption.is-selected,
 .tl-bgm.is-selected,
@@ -2936,6 +2941,87 @@ button.primary {
   white-space: nowrap;
 }
 .gd-loop-revert:hover:not(:disabled) { background: #262c35; border-color: #3a4350; }
+/* シーン内のカット（S1〜S4） */
+.gd-cut-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.gd-cut-list-label { font-size: 11px; color: #9aa3ad; margin-right: 2px; }
+.gd-cut {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid #2c333d;
+  background: #171b21;
+  min-width: 0;
+}
+.gd-cut.is-on { border-color: #ff4655; background: #232a33; }
+.gd-cut-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #e6e8eb;
+  font-size: 11px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gd-cut-pick b {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #2b4468;
+  font-size: 10px;
+}
+.gd-cut.is-on .gd-cut-pick b { background: #ff4655; }
+.gd-cut-pick em {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: normal;
+  color: #9aa3ad;
+}
+.gd-cut-tool {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: #1e242c;
+  color: #c9ced4;
+  font-size: 12px;
+}
+.gd-cut-tool:hover:not(:disabled) { background: #2c333d; }
+.gd-cut-tool:disabled { opacity: 0.35; }
+.gd-cut-add {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px dashed #4a5361;
+  background: transparent;
+  color: #c9ced4;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.gd-cut-add:hover:not(:disabled) { background: #1e242c; border-color: #6b7685; }
+.gd-cut-add:disabled { opacity: 0.4; }
+.gd-cut-total { font-size: 11px; color: #9aa3ad; white-space: nowrap; margin-left: 4px; }
+.gd-cut-note { margin: 0; font-size: 11px; color: #b9b3d8; }
+.gd-cut-scope { font-size: 11px; color: #9aa3ad; white-space: nowrap; }
 .gd-trim-zoom {
   display: flex;
   align-items: center;
@@ -3188,7 +3274,6 @@ button.primary {
   color: #c9ced4;
   white-space: nowrap;
 }
-.gd-trim-length.is-warn { color: #f2c38b; }
 .gd-confirm-scene {
   height: 34px;
   padding: 0 14px;

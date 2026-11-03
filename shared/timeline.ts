@@ -4,6 +4,15 @@ import type { Timeline, TimelineItem, VolumePoint } from './schema/timeline';
 import type { CtaDesign } from './cta-design';
 import { resolveCtaDesign } from './s4-cta';
 import { BUILTIN_VIDEO_STRUCTURE_TEMPLATES, DEFAULT_SCENE_ORDER } from './video-structure';
+import {
+  PRIMARY_CUT_ID,
+  MIN_CUT_SEC,
+  cutLength,
+  extraCutClipOfItem,
+  extraCutsOf,
+  sceneCuts,
+  type ResolvedCut,
+} from './scene-cuts';
 
 export const SCENE_BAND: Record<SceneKey, string> = {
   hook: 'S1 フック',
@@ -156,6 +165,53 @@ export const playbackClip = (project: Project, sceneKey: SceneKey): PlaybackClip
   return project.clips.find((clip) => clip.id === scene?.clipId);
 };
 
+/** タイムライン項目が実際に再生するクリップ。カット2以降の項目はそのカットのクリップ。 */
+export const itemClip = (
+  project: Project,
+  item: Pick<TimelineItem, 'sceneKey' | 'clipId'>,
+): PlaybackClip | undefined => extraCutClipOfItem(project, item) ?? playbackClip(project, item.sceneKey);
+
+/**
+ * 同じシーンの項目が連続している区間。テロップ・CTA などはこの区間の時間で動かす。
+ * offset はその区間の先頭から、この項目の先頭までの秒。
+ */
+export const sceneSpanOf = (
+  items: TimelineItem[],
+  index: number,
+): { start: number; duration: number; offset: number } => {
+  const item = items[index];
+  if (!item) return { start: 0, duration: 0, offset: 0 };
+  let first = index;
+  while (first > 0 && items[first - 1]?.sceneKey === item.sceneKey) first -= 1;
+  let last = index;
+  while (last < items.length - 1 && items[last + 1]?.sceneKey === item.sceneKey) last += 1;
+  const head = items[first] ?? item;
+  const tail = items[last] ?? item;
+  return {
+    start: head.start,
+    duration: Math.max(0, tail.start + tail.duration - head.start),
+    offset: Math.max(0, item.start - head.start),
+  };
+};
+
+/**
+ * 直前の項目と切り替えだけでつなぐか。カットが2本以上のシーンで、直前も同じシーンのとき。
+ * このときは項目の transition を使わない。
+ */
+export const cutOnlyItem = (project: Project, items: TimelineItem[], index: number): boolean => {
+  const item = items[index];
+  if (!item || index === 0 || items[index - 1]?.sceneKey !== item.sceneKey) return false;
+  return sceneCuts(project, item.sceneKey).length > 1;
+};
+
+/** カットが2本以上あるシーンのカット。1本なら null。 */
+const multiCuts = (project: Project, sceneKey: SceneKey): ResolvedCut[] | null => {
+  const cuts = sceneCuts(project, sceneKey);
+  return cuts.length > 1 ? cuts : null;
+};
+
+const cutItemDuration = (cut: ResolvedCut): number => Math.max(MIN_CUT_SEC, cutLength(cut.clip));
+
 const itemFromScene = (
   project: Project,
   sceneKey: SceneKey,
@@ -177,6 +233,36 @@ const itemFromScene = (
     volume: scene?.volume ?? 0.1,
     arrow: null,
   };
+};
+
+/** カットが2本以上のシーンを、カットごとの項目へ展開する。同じシーンのカットの間は切り替えだけ。 */
+const cutItemsFromScene = (
+  project: Project,
+  sceneKey: SceneKey,
+  start: number,
+  cuts: ResolvedCut[],
+  baseId?: string,
+): TimelineItem[] => {
+  let cursor = start;
+  const built = itemFromScene(project, sceneKey, start, cutItemDuration(cuts[0] as ResolvedCut));
+  const head = baseId ? { ...built, id: baseId } : built;
+  const items = cuts.map((cut, index) => {
+    const duration = cutItemDuration(cut);
+    const item: TimelineItem =
+      index === 0
+        ? { ...head, duration }
+        : {
+            ...head,
+            id: `${head.id}-${cut.cutId}`,
+            clipId: cut.clip.id,
+            start: cursor,
+            duration,
+            transition: 'cut',
+          };
+    cursor += duration;
+    return item;
+  });
+  return items;
 };
 
 const reflow = (timeline: Timeline): Timeline => {
@@ -215,11 +301,19 @@ const buildTimelineBody = (project: Project): Timeline => {
       : DEFAULT_SCENE_ORDER;
   const items = sceneOrder
     .filter((sceneKey) => sceneKey !== 'demo' || includeDemo)
-    .map((sceneKey) => {
-    const item = itemFromScene(project, sceneKey, start, durations[sceneKey]);
-    start += durations[sceneKey];
-    return item;
-  });
+    .flatMap((sceneKey) => {
+      const cuts = multiCuts(project, sceneKey);
+      if (cuts) {
+        const cutItems = cutItemsFromScene(project, sceneKey, start, cuts);
+        const last = cutItems[cutItems.length - 1];
+        if (last) start = last.start + last.duration;
+        return cutItems;
+      }
+      const item = itemFromScene(project, sceneKey, start, durations[sceneKey]);
+      start += durations[sceneKey];
+      return [item];
+    });
+  const sceneHeads = items.filter((item, index) => items[index - 1]?.sceneKey !== item.sceneKey);
   const first = items[0];
   const stand = items.find((item) => item.sceneKey === 'stand');
   const aim = items.find((item) => item.sceneKey === 'aim');
@@ -250,7 +344,7 @@ const buildTimelineBody = (project: Project): Timeline => {
   return {
     durationSec: start,
     items,
-    volumePoints: items.map((item) => ({
+    volumePoints: sceneHeads.map((item) => ({
       id: `volume-${item.id}`,
       time: item.start,
       game: item.volume,
@@ -311,9 +405,17 @@ export const rewriteSceneRange = (project: Project, sceneKey: SceneKey): Project
 export const activeTimeline = (project: Project): Timeline =>
   project.timelineEdited && project.timeline ? project.timeline : buildTimeline(project);
 
+/** シーンの最初の項目の尺。カットが複数あるシーンではカット1の尺。 */
 export const sceneItemDuration = (project: Project, sceneKey: SceneKey): number => {
   const item = activeTimeline(project).items.find((entry) => entry.sceneKey === sceneKey);
   return item?.duration ?? sceneDurations(project)[sceneKey];
+};
+
+/** シーンの項目の尺の合計（カット・分割をすべて含む）。 */
+export const sceneTotalDuration = (project: Project, sceneKey: SceneKey): number => {
+  const items = activeTimeline(project).items.filter((entry) => entry.sceneKey === sceneKey);
+  if (items.length === 0) return sceneDurations(project)[sceneKey];
+  return items.reduce((sum, item) => sum + item.duration, 0);
 };
 
 /** クリップ全体ではなく、そのシーンが実際に再生する元動画の区間。 */
@@ -439,6 +541,141 @@ export const withDemoDuration = <T extends Project>(project: T, timeline: Timeli
   };
 };
 
+/** そのカットの項目（分割していれば複数）。カット1はカット2以降のクリップを指さない項目。 */
+export const cutItemsOf = (
+  project: Project,
+  timeline: Timeline,
+  sceneKey: SceneKey,
+  cutId: string,
+): TimelineItem[] => {
+  const scene = project.scenes.find((entry) => entry.sceneKey === sceneKey);
+  const extras = extraCutsOf(scene);
+  const cut = cutId === PRIMARY_CUT_ID ? undefined : extras.find((entry) => entry.id === cutId);
+  if (cutId !== PRIMARY_CUT_ID && !cut) return [];
+  return timeline.items.filter(
+    (item) =>
+      item.sceneKey === sceneKey &&
+      (cut ? item.clipId === cut.clipId : !extras.some((entry) => entry.clipId === item.clipId)),
+  );
+};
+
+/** カットの長さの合計を、シーンの尺（sceneDurations）へ書く。 */
+const withSceneTotalFromCuts = (project: Project, sceneKey: SceneKey): Project => {
+  const cuts = sceneCuts(project, sceneKey);
+  if (cuts.length === 0) return project;
+  const total = clampSceneDuration(
+    sceneKey,
+    cuts.reduce((sum, cut) => sum + cutItemDuration(cut), 0),
+  );
+  return {
+    ...project,
+    templateParams: {
+      ...project.templateParams,
+      sceneDurations: { ...project.templateParams.sceneDurations, [sceneKey]: total },
+    },
+  };
+};
+
+/**
+ * 1本のカットの長さを変え、シーンの尺（合計）とタイムラインへ写す。
+ * タイムラインはそのカットの項目が1つのときだけ合わせる（分割済みなら触らない）。
+ */
+export const applyCutLength = (
+  project: Project,
+  sceneKey: SceneKey,
+  cutId: string,
+  seconds: number,
+): Project => {
+  if (!multiCuts(project, sceneKey)) {
+    return cutId === PRIMARY_CUT_ID ? applySceneCutDuration(project, sceneKey, seconds) : project;
+  }
+  const cut = sceneCuts(project, sceneKey).find((entry) => entry.cutId === cutId);
+  if (!cut || !Number.isFinite(seconds)) return project;
+  const length = clamp(seconds, MIN_CUT_SEC, STRETCH_MAX);
+  const range = rangeForSceneDuration(cut.clip.in, length, mediaDurationOf(project, cut.clip));
+  const next = withSceneTotalFromCuts(
+    {
+      ...project,
+      clips: project.clips.map((entry) =>
+        entry.id === cut.clip.id ? { ...entry, in: range.in, out: range.out } : entry,
+      ),
+    },
+    sceneKey,
+  );
+  const timeline = storedTimeline(next);
+  if (!timeline) return next;
+  const own = cutItemsOf(next, timeline, sceneKey, cutId);
+  const item = own[0];
+  if (own.length !== 1 || !item) return next.timeline ? next : { ...next, timeline };
+  const trimmed = trimTimelineItem(timeline, item.id, 'end', Math.max(MIN_CUT_SEC, range.out - range.in));
+  return {
+    ...next,
+    timeline: {
+      ...trimmed,
+      items: trimmed.items.map((entry) => (entry.id === item.id ? { ...entry, sourceOffset: 0 } : entry)),
+    },
+  };
+};
+
+/**
+ * カットの追加・削除・並べ替え・動画の差し替えのあと、そのシーンの項目だけを作り直す。
+ * そのシーンの分割・速度は失われる。ほかのシーンの項目・音量の点・効果音は時刻をずらして残す。
+ */
+export const rebuildSceneItems = (project: Project, sceneKey: SceneKey): Project => {
+  const next = withSceneTotalFromCuts(project, sceneKey);
+  const timeline = next.timeline;
+  if (!timeline) return next;
+  const oldItems = timeline.items;
+  const oldScene = oldItems.filter((item) => item.sceneKey === sceneKey);
+  const template = oldScene[0];
+  if (!template) return next;
+  const cuts = multiCuts(next, sceneKey);
+  const built = cuts
+    ? cutItemsFromScene(next, sceneKey, 0, cuts, template.id)
+    : [{ ...itemFromScene(next, sceneKey, 0, sceneDurations(next)[sceneKey]), id: template.id }];
+  const fresh = built.map((item, index) => ({
+    ...item,
+    layout: template.layout,
+    volume: template.volume,
+    transition: index === 0 ? template.transition : ('cut' as const),
+    arrow: index === 0 ? template.arrow : null,
+  }));
+  const merged: TimelineItem[] = [];
+  for (const item of oldItems) {
+    if (item.sceneKey !== sceneKey) merged.push(item);
+    else if (item === template) merged.push(...fresh);
+  }
+  const reflowed = reflow({ ...timeline, items: merged });
+  const newStart = new Map(reflowed.items.map((item) => [item.id, item.start]));
+  const oldTotal = oldScene.reduce((sum, item) => sum + item.duration, 0);
+  const newTotal = fresh.reduce((sum, item) => sum + item.duration, 0);
+  const sceneStart = newStart.get(template.id) ?? 0;
+  const mapTime = (time: number): number => {
+    let before = 0;
+    for (const item of oldItems) {
+      const inside = time >= item.start - 0.0001 && time < item.start + item.duration - 0.0001;
+      if (item.sceneKey === sceneKey) {
+        if (inside) {
+          const ratio = oldTotal > 0 ? (before + time - item.start) / oldTotal : 0;
+          return sceneStart + ratio * newTotal;
+        }
+        before += item.duration;
+      } else if (inside) {
+        return (newStart.get(item.id) ?? item.start) + (time - item.start);
+      }
+    }
+    return Math.max(0, time + reflowed.durationSec - timeline.durationSec);
+  };
+  return {
+    ...next,
+    timeline: {
+      ...reflowed,
+      volumePoints: timeline.volumePoints.map((point) => ({ ...point, time: mapTime(point.time) })),
+      effects: timeline.effects.map((effect) => ({ ...effect, start: mapTime(effect.start) })),
+    },
+  };
+};
+
 /** シーンの再生尺を、手順・クリップ範囲・タイムラインへ同時に保存する。 */
 export const applySceneCutDuration = (
   project: Project,
@@ -446,6 +683,8 @@ export const applySceneCutDuration = (
   seconds: number,
 ): Project => {
   if (!TRIM_DURATION_SCENES.includes(sceneKey)) return project;
+  // カットが複数あるシーンでは、手順3などの「シーンの尺」はカット1の長さとして扱う
+  if (multiCuts(project, sceneKey)) return applyCutLength(project, sceneKey, PRIMARY_CUT_ID, seconds);
   const duration = clampSceneDuration(sceneKey, seconds);
   let next: Project = {
     ...project,
@@ -501,6 +740,21 @@ export const syncTimelineDurationsToScenes = (project: Project, timeline: Timeli
     );
     sceneDurationsNext[sceneKey] = duration;
     if (sceneKey === 'demo') demoDuration = Math.max(DEMO_DURATION_MIN, duration);
+    const cuts = multiCuts({ ...project, clips }, sceneKey);
+    if (cuts) {
+      // カットごとに、項目が1つで等速・オフセットなしのときだけクリップの範囲を合わせる
+      for (const cut of cuts) {
+        const own = cutItemsOf(project, timeline, sceneKey, cut.cutId);
+        const only = own[0];
+        if (own.length !== 1 || !only || only.sourceOffset !== 0 || only.speed !== 1) continue;
+        const range = rangeForSceneDuration(cut.clip.in, only.duration, mediaDurationOf(project, cut.clip));
+        if (range.in === cut.clip.in && range.out === cut.clip.out) continue;
+        clips = clips.map((entry) =>
+          entry.id === cut.clip.id ? { ...entry, in: range.in, out: range.out } : entry,
+        );
+      }
+      continue;
+    }
     if (items.length !== 1) continue;
     const item = items[0];
     if (item.sourceOffset !== 0 || item.speed !== 1) continue;
@@ -765,7 +1019,7 @@ export const bgmDuckingGain = (seconds: number, project: Project): number => {
   if (!project.audio.bgm?.ducking) return 1;
   for (const item of activeTimeline(project).items) {
     if (seconds >= item.start && seconds < item.start + item.duration) {
-      const clip = playbackClip(project, item.sceneKey);
+      const clip = itemClip(project, item);
       const asset = project.assets.find((item) => item.id === clip?.assetId);
       if (!clip || !asset?.loudnessEnvelope.length) return 1;
       const sourceTime =

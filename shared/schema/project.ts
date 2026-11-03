@@ -133,9 +133,22 @@ export const stillSchema = z.object({
 
 export { sceneKeySchema } from './project-keys';
 
+/** シーン内のカット2以降。カット1は scene.clipId とシーンのクロップのまま。 */
+export const sceneCutSchema = z.object({
+  id: z.string(),
+  clipId: z.string(),
+  /** 未指定はシーンの値。動画ごとに画角が違うので、切り抜き位置だけはカットごとに持てる。 */
+  cropCenterX: z.number().min(0).max(1).optional(),
+  cropCenterY: z.number().min(0).max(1).optional(),
+  cropZoom: z.number().min(1).max(1.5).optional(),
+});
+
 export const sceneSchema = z.object({
   sceneKey: sceneKeySchema,
+  /** カット1（シーンの代表クリップ）。 */
   clipId: z.string().optional(),
+  /** カット2以降を並び順に。未指定・空はカット1だけ。S1〜S4 だけで使う。 */
+  extraCuts: z.array(sceneCutSchema).optional(),
   layout916: z.enum(['center-crop', 'blur-fit', 'focus', 'split']).default('blur-fit'),
   cropCenterX: z.number().min(0).max(1).default(0.5),
   /** フォーカスの切り抜き縦位置。未指定は中央。 */
@@ -549,6 +562,8 @@ export const projectSchema = z.object({
 export type Project = z.infer<typeof projectSchema>;
 export type Lineup = z.infer<typeof lineupSchema>;
 export type Scene = z.infer<typeof sceneSchema>;
+export type SceneCut = z.infer<typeof sceneCutSchema>;
+export type Clip = z.infer<typeof clipSchema>;
 export type Caption = z.infer<typeof captionSchema>;
 
 export const defaultDemoCaption = (): Caption => ({

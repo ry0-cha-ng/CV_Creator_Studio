@@ -8,6 +8,8 @@ export const timelineItemSchema = z.object({
     .enum(['standard', 'guide-title', 'guide-steps', 'guide-card', 'guide-demo'])
     .default('standard')
     .transform((): 'standard' => 'standard'),
+  /** 未指定はシーンのカット1（scene.clipId）。カット2以降の項目だけに入る。 */
+  clipId: z.string().optional(),
   start: z.number().min(0),
   duration: z.number().positive(),
   sourceOffset: z.number().min(0).default(0),

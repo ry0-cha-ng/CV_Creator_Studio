@@ -111,7 +111,28 @@ import {
   rangeForSceneDurationFromOut,
   sceneDurationLimits,
   sceneItemDuration,
+  sceneTotalDuration,
+  applyCutLength,
 } from '../../shared/timeline';
+import {
+  MAX_CUTS_PER_SCENE,
+  PRIMARY_CUT_ID,
+  clipInUse,
+  cutLength,
+  isMultiCutScene,
+  sceneCrop,
+  sceneCuts,
+  type CutCrop,
+} from '../../shared/scene-cuts';
+import {
+  addCut,
+  canAddCut,
+  moveCut,
+  removeCut,
+  retargetCutVideo,
+  setCutCrop,
+  setCutRange,
+} from '../../shared/scene-cut-edit';
 import { CTA_DESIGN_OPTIONS, type CtaDesign } from '../../shared/cta-design';
 import {
   likeCtaActive,
@@ -1231,18 +1252,73 @@ export const TrimStep = ({
   const scene = project.scenes.find((item) => item.sceneKey === sceneKey);
   const storedClip = project.clips.find((item) => item.id === scene?.clipId);
   const loopLead = sceneKey === 'loop' && !storedClip ? defaultLoopRange(project) : null;
+  // S1〜S4 はカットを並べられる。選んだカットに、範囲・動画・クロップの編集が効く
+  const [cutIndex, setCutIndex] = useState(0);
+  useEffect(() => setCutIndex(0), [sceneKey]);
+  const cuts = isMultiCutScene(sceneKey) ? sceneCuts(project, sceneKey) : [];
+  const multiCut = cuts.length > 1;
+  const selectedIndex = Math.min(cutIndex, Math.max(0, cuts.length - 1));
+  const selectedCut = cuts[selectedIndex];
+  const cutId = selectedCut?.cutId ?? PRIMARY_CUT_ID;
+  const editingExtra = cutId !== PRIMARY_CUT_ID;
   const clip =
+    (editingExtra ? selectedCut?.clip : undefined) ??
     storedClip ??
     (loopLead
       ? { id: 'loop-before-hook', assetId: loopLead.assetId, in: loopLead.in, out: loopLead.out }
       : undefined);
   const asset = project.assets.find((item) => item.id === clip?.assetId);
-  const copy = sceneGuideCopy(project, sceneKey);
+  /** クロップの表示用。カット2以降はそのカットの値。 */
+  const cropScene = scene && editingExtra && selectedCut ? { ...scene, ...selectedCut.crop } : scene;
+  const copy = sceneGuideCopy(sceneKey);
   const duration = asset?.meta.duration ?? 0;
   const frame = 1 / project.templateParams.fps;
   const length = clip ? clip.out - clip.in : 0;
   const sceneLength = sceneKey === 'card' ? sceneItemDuration(project, sceneKey) : length;
-  const lengthWarn = clip ? length < copy.min || length > copy.max : false;
+  const sceneTotal = multiCut ? cuts.reduce((sum, cut) => sum + cutLength(cut.clip), 0) : length;
+
+  /** 選んでいるカットのクロップを変える。カット1・カットのないシーンはシーンの値。 */
+  const setCrop = (patch: Partial<CutCrop> | ((crop: CutCrop) => Partial<CutCrop>)): void => {
+    update((current) => {
+      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+      if (!target) return current;
+      const crop =
+        sceneCuts(current, sceneKey).find((cut) => cut.cutId === cutId)?.crop ?? sceneCrop(target);
+      const next = typeof patch === 'function' ? patch(crop) : patch;
+      if (editingExtra) return setCutCrop(current, sceneKey, cutId, next);
+      Object.assign(target, next);
+      return current;
+    });
+  };
+
+  const markerFxOn = Boolean(
+    scene?.aimMarker?.enabled || scene?.aimZoom?.enabled || scene?.zoom?.enabled || scene?.freeze?.enabled,
+  );
+  /** カット1が入れ替わるとき、照準マーカーなどが新しいカット1に付くことを確かめる。 */
+  const confirmPrimaryChange = (): boolean =>
+    !markerFxOn ||
+    window.confirm('照準マーカー・ズーム・フリーズは、新しいカット1に付きます。よろしいですか？');
+
+  const addCutAfterSelected = (): void => {
+    const ids = { cutId: crypto.randomUUID(), clipId: crypto.randomUUID() };
+    update((current) => addCut(current, sceneKey, selectedIndex, ids));
+    setCutIndex(selectedIndex + 1);
+  };
+
+  const moveSelectedCut = (direction: -1 | 1): void => {
+    const target = selectedIndex + direction;
+    if (target < 0 || target >= cuts.length) return;
+    if ((selectedIndex === 0 || target === 0) && !confirmPrimaryChange()) return;
+    update((current) => moveCut(current, sceneKey, cutId, direction));
+    setCutIndex(target);
+  };
+
+  const removeSelectedCut = (): void => {
+    if (!multiCut) return;
+    if (selectedIndex === 0 && !confirmPrimaryChange()) return;
+    update((current) => removeCut(current, sceneKey, cutId));
+    setCutIndex(Math.max(0, selectedIndex - 1));
+  };
 
   const seek = (seconds: number): void => {
     const next = Math.min(duration, Math.max(0, seconds));
@@ -1290,7 +1366,7 @@ export const TrimStep = ({
       if (!loop?.clipId) return current;
       const clipId = loop.clipId;
       loop.clipId = undefined;
-      if (!current.scenes.some((item) => item.clipId === clipId)) {
+      if (!clipInUse(current, clipId)) {
         current.clips = current.clips.filter((item) => item.id !== clipId);
       }
       if (current.timeline) {
@@ -1320,6 +1396,10 @@ export const TrimStep = ({
       });
       return;
     }
+    if (editingExtra) {
+      update((current) => setCutRange(current, sceneKey, cutId, range));
+      return;
+    }
     if (!clip) return;
     update((current) => {
       const target = current.clips.find((item) => item.id === clip.id);
@@ -1335,6 +1415,10 @@ export const TrimStep = ({
     if (!Number.isFinite(raw)) return;
     if (sceneKey === 'card' || loopLead) {
       update((current) => applySceneCutDuration(current, sceneKey, raw));
+      return;
+    }
+    if (editingExtra) {
+      update((current) => applyCutLength(current, sceneKey, cutId, raw));
       return;
     }
     if (!clip) return;
@@ -1398,16 +1482,11 @@ export const TrimStep = ({
       nudgeCrop:
         scene?.layout916 === 'focus'
           ? (axis, delta) => {
-              update((current) => {
-                const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                if (!target) return current;
-                if (axis === 'y') {
-                  target.cropCenterY = Math.min(1, Math.max(0, focusCropCenterYOf(target) + delta));
-                } else {
-                  target.cropCenterX = Math.min(1, Math.max(0, target.cropCenterX + delta));
-                }
-                return current;
-              });
+              setCrop((crop) =>
+                axis === 'y'
+                  ? { cropCenterY: Math.min(1, Math.max(0, focusCropCenterYOf(crop) + delta)) }
+                  : { cropCenterX: Math.min(1, Math.max(0, crop.cropCenterX + delta)) },
+              );
             }
           : null,
     };
@@ -1432,9 +1511,12 @@ export const TrimStep = ({
   }, [sceneKey, clip?.id, sceneLength, length, savedDefault]);
 
   const cropW = (9 / 16) / (16 / 9);
-  const cropLeft = Math.min(1 - cropW, Math.max(0, (scene?.cropCenterX ?? 0.5) - cropW / 2));
+  const cropLeft = Math.min(1 - cropW, Math.max(0, (cropScene?.cropCenterX ?? 0.5) - cropW / 2));
   const sourceSize = focusFrameOf(asset?.meta.width, asset?.meta.height);
-  const focusWindow = scene?.layout916 === 'focus' ? resolveFocusCrop(sourceSize, scene.cropCenterX, scene.cropZoom, scene.cropCenterY) : null;
+  const focusWindow =
+    cropScene?.layout916 === 'focus'
+      ? resolveFocusCrop(sourceSize, cropScene.cropCenterX, cropScene.cropZoom, cropScene.cropCenterY)
+      : null;
   const shownCropLeft = focusWindow ? focusWindow.x / sourceSize.w : cropLeft;
   const shownCropW = focusWindow ? focusWindow.w / sourceSize.w : cropW;
   const shownCropTop = focusWindow ? focusWindow.y / sourceSize.h : 0;
@@ -1452,10 +1534,11 @@ export const TrimStep = ({
     startPlayhead: number;
   } | null>(null);
   const nextKey = tabs[tabs.indexOf(sceneKey as (typeof tabs)[number]) + 1];
-  const nextCode = nextKey ? sceneGuideCopy(project, nextKey).title.split(' ')[0] : '';
+  const nextCode = nextKey ? sceneGuideCopy(nextKey).title.split(' ')[0] : '';
   const timelineItems = activeTimeline(project).items;
+  // 照準マーカーなどはカット1にだけ付くので、カット2以降では範囲外の警告を出さない
   const focusWarning =
-    scene?.layout916 === 'focus'
+    scene?.layout916 === 'focus' && !editingExtra
       ? focusOutsideDetail(
           sourceSize,
           scene.cropCenterX,
@@ -1469,7 +1552,7 @@ export const TrimStep = ({
       : null;
 
   const placeMarker = (bounds: DOMRect, clientX: number, clientY: number): void => {
-    if (!scene?.aimMarker?.enabled || bounds.width <= 0 || bounds.height <= 0) return;
+    if (editingExtra || !scene?.aimMarker?.enabled || bounds.width <= 0 || bounds.height <= 0) return;
     const x = (clientX - bounds.left) / bounds.width;
     const y = (clientY - bounds.top) / bounds.height;
     const markerX =
@@ -1513,6 +1596,8 @@ export const TrimStep = ({
 
   const markerAt = scene?.aimMarker?.at ?? 0;
   const markerWaiting = Boolean(clip && scene?.aimMarker?.enabled && playhead + 1e-4 < clip.in + markerAt);
+  /** 照準マーカー・拡大枠を元の録画の上に出すか（カット1を選んでいるときだけ）。 */
+  const showMarker = !editingExtra && Boolean(scene?.aimMarker?.enabled);
   const hookClip = project.clips.find(
     (item) => item.id === project.scenes.find((entry) => entry.sceneKey === 'hook')?.clipId,
   );
@@ -1539,8 +1624,8 @@ export const TrimStep = ({
       return { tone: 'is-auto', status: '任意' };
     }
     if (sceneHasRange(project, key)) {
-      const seconds = activeTimeline(project).items.find((item) => item.sceneKey === key)?.duration;
-      return { tone: 'is-set', status: `✓ ${seconds?.toFixed(1) ?? '0.0'}s` };
+      const seconds = sceneTotalDuration(project, key);
+      return { tone: 'is-set', status: `✓ ${seconds.toFixed(1)}s` };
     }
     return { tone: 'is-empty', status: '未設定' };
   };
@@ -1574,7 +1659,7 @@ export const TrimStep = ({
       </header>
       <div className="gd-scene-tabs" role="tablist" aria-label="シーン">
         {trimScenes(project).map((key) => {
-          const info = sceneGuideCopy(project, key);
+          const info = sceneGuideCopy(key);
           const state = tabState(key);
           return (
             <button
@@ -1596,7 +1681,7 @@ export const TrimStep = ({
           <div className="gd-trim-info">
             <span className="gd-trim-badge">{copy.title}</span>
             <p>
-              {copy.body}。目安 <strong>{copy.target.toFixed(1)}秒</strong>（{copy.min}〜{copy.max}秒）
+              {copy.body}
             </p>
           </div>
           <div className="gd-trim-seconds-row">
@@ -1686,11 +1771,16 @@ export const TrimStep = ({
           <div className="gd-trim-info">
             <span className="gd-trim-badge">{copy.title}</span>
             <p>
-              {copy.body}。目安 <strong>{copy.target.toFixed(1)}秒</strong>（{copy.min}〜{copy.max}秒）
+              {copy.body}
             </p>
             {videos.length > 1 ? (
               videoChoice(asset.id, (assetId) => {
-                if (assetId !== asset.id) update((current) => retargetSceneVideo(current, sceneKey, assetId));
+                if (assetId === asset.id) return;
+                update((current) =>
+                  multiCut
+                    ? retargetCutVideo(current, sceneKey, cutId, assetId)
+                    : retargetSceneVideo(current, sceneKey, assetId),
+                );
               })
             ) : (
               <span className="gd-trim-src">
@@ -1713,9 +1803,78 @@ export const TrimStep = ({
               </button>
             )}
           </div>
+          {cuts.length > 0 && (
+            <div className="gd-cut-list" role="group" aria-label={`${copy.title}のカット`}>
+              <span className="gd-cut-list-label">カット</span>
+              {cuts.map((cut, index) => {
+                const cutAsset = project.assets.find((item) => item.id === cut.clip.assetId);
+                const on = index === selectedIndex;
+                return (
+                  <div key={cut.cutId} className={on ? 'gd-cut is-on' : 'gd-cut'}>
+                    <button
+                      type="button"
+                      className="gd-cut-pick"
+                      aria-pressed={on}
+                      title={cutAsset ? assetFileName(cutAsset) : undefined}
+                      onClick={() => setCutIndex(index)}
+                    >
+                      <b>{index + 1}</b>
+                      <span>{cutLength(cut.clip).toFixed(1)}秒</span>
+                      {videos.length > 1 && cutAsset && <em className="gd-mono">{assetFileName(cutAsset)}</em>}
+                    </button>
+                    {on && multiCut && (
+                      <>
+                        <button
+                          type="button"
+                          className="gd-cut-tool"
+                          aria-label="このカットを前へ"
+                          disabled={index === 0}
+                          onClick={() => moveSelectedCut(-1)}
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          className="gd-cut-tool"
+                          aria-label="このカットを後ろへ"
+                          disabled={index === cuts.length - 1}
+                          onClick={() => moveSelectedCut(1)}
+                        >
+                          →
+                        </button>
+                        <button
+                          type="button"
+                          className="gd-cut-tool"
+                          aria-label="このカットを削除"
+                          onClick={removeSelectedCut}
+                        >
+                          ×
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                className="gd-cut-add"
+                disabled={!canAddCut(project, sceneKey)}
+                title={cuts.length >= MAX_CUTS_PER_SCENE ? `カットは${MAX_CUTS_PER_SCENE}本までです` : undefined}
+                onClick={addCutAfterSelected}
+              >
+                ＋ カットを追加
+              </button>
+              {multiCut && (
+                <span className="gd-cut-total">シーン合計 {sceneTotal.toFixed(1)}秒</span>
+              )}
+            </div>
+          )}
+          {editingExtra && (
+            <p className="gd-cut-note">照準マーカー・ズーム・フリーズはカット1にだけ付きます。ここではこのカットの範囲・動画・切り抜き位置を決めます</p>
+          )}
           <div className="gd-trim-seconds-row">
             <label className="gd-trim-seconds">
-              切り抜き秒数
+              {multiCut ? `カット${selectedIndex + 1}の秒数` : '切り抜き秒数'}
               <input
                 type="number"
                 min={durationLimits.min}
@@ -1743,28 +1902,33 @@ export const TrimStep = ({
                 }}
               />
             </label>
-            <button type="button" className="gd-trim-default" onClick={() => cutToSeconds(savedDefault)}>
-              デフォルト {savedDefault.toFixed(1)}秒で切る
-            </button>
-            <button
-              type="button"
-              className="gd-trim-default"
-              onClick={() => {
-                const next = Number(secondsDraft);
-                if (!Number.isFinite(next)) return;
-                const seconds = clampSceneDuration(sceneKey, next);
-                cutToSeconds(seconds);
-                void window.studio
-                  .setSceneDurationDefault(sceneKey, seconds)
-                  .then(setSavedDefaults)
-                  .catch((error: unknown) => {
-                    useStudioStore.getState().setError(error instanceof Error ? error.message : String(error));
-                  });
-              }}
-            >
-              この秒数をデフォルトにする
-            </button>
-            <span className="gd-trim-src">保存済み {savedDefault.toFixed(1)}秒</span>
+            {/* カットが複数あるときは、シーンの既定の尺の意味が変わらないように出さない */}
+            {!multiCut && (
+              <>
+                <button type="button" className="gd-trim-default" onClick={() => cutToSeconds(savedDefault)}>
+                  デフォルト {savedDefault.toFixed(1)}秒で切る
+                </button>
+                <button
+                  type="button"
+                  className="gd-trim-default"
+                  onClick={() => {
+                    const next = Number(secondsDraft);
+                    if (!Number.isFinite(next)) return;
+                    const seconds = clampSceneDuration(sceneKey, next);
+                    cutToSeconds(seconds);
+                    void window.studio
+                      .setSceneDurationDefault(sceneKey, seconds)
+                      .then(setSavedDefaults)
+                      .catch((error: unknown) => {
+                        useStudioStore.getState().setError(error instanceof Error ? error.message : String(error));
+                      });
+                  }}
+                >
+                  この秒数をデフォルトにする
+                </button>
+                <span className="gd-trim-src">保存済み {savedDefault.toFixed(1)}秒</span>
+              </>
+            )}
           </div>
           <div className="gd-trim-zoom" role="group" aria-label="元動画の表示サイズ">
             <span>表示サイズ</span>
@@ -1797,13 +1961,7 @@ export const TrimStep = ({
                   if (bounds.width <= 0 || bounds.height <= 0) return;
                   const nextX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
                   const nextY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
-                  update((current) => {
-                    const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                    if (!target) return current;
-                    target.cropCenterX = nextX;
-                    target.cropCenterY = nextY;
-                    return current;
-                  });
+                  setCrop({ cropCenterX: nextX, cropCenterY: nextY });
                   return;
                 }
                 placeMarker(bounds, event.clientX, event.clientY);
@@ -1862,8 +2020,8 @@ export const TrimStep = ({
                       cropDrag.current = {
                         pointerX: event.clientX,
                         pointerY: event.clientY,
-                        centerX: scene.cropCenterX,
-                        centerY: focusCropCenterYOf(scene),
+                        centerX: (cropScene ?? scene).cropCenterX,
+                        centerY: focusCropCenterYOf(cropScene ?? scene),
                         moved: false,
                       };
                     }}
@@ -1875,13 +2033,11 @@ export const TrimStep = ({
                       if (!drag.moved) return;
                       const nextX = Math.min(1, Math.max(0, drag.centerX + (event.clientX - drag.pointerX) / bounds.width));
                       const nextY = Math.min(1, Math.max(0, drag.centerY + (event.clientY - drag.pointerY) / bounds.height));
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (!target) return current;
-                        target.cropCenterX = nextX;
-                        if (target.layout916 === 'focus') target.cropCenterY = nextY;
-                        return current;
-                      });
+                      setCrop(
+                        scene.layout916 === 'focus'
+                          ? { cropCenterX: nextX, cropCenterY: nextY }
+                          : { cropCenterX: nextX },
+                      );
                     }}
                     onPointerUp={(event) => {
                       const drag = cropDrag.current;
@@ -1892,13 +2048,7 @@ export const TrimStep = ({
                         if (scene.layout916 === 'focus') {
                           const nextX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
                           const nextY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
-                          update((current) => {
-                            const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                            if (!target) return current;
-                            target.cropCenterX = nextX;
-                            target.cropCenterY = nextY;
-                            return current;
-                          });
+                          setCrop({ cropCenterX: nextX, cropCenterY: nextY });
                         } else {
                           placeMarker(bounds, event.clientX, event.clientY);
                         }
@@ -1923,7 +2073,7 @@ export const TrimStep = ({
                   <span className="is-tag is-center">中央</span>
                 </div>
               )}
-              {scene.aimMarker?.enabled && !scene.aimZoom?.enabled && (
+              {showMarker && scene.aimMarker && !scene.aimZoom?.enabled && (
                 <span
                   className={markerWaiting ? 'gd-aim-handle is-movable is-waiting' : 'gd-aim-handle is-movable'}
                   style={{
@@ -1960,7 +2110,7 @@ export const TrimStep = ({
                   </span>
                 </span>
               )}
-              {scene.layout916 === 'center-crop' && scene.aimMarker?.enabled && scene.aimZoom?.enabled && asset && (
+              {scene.layout916 === 'center-crop' && showMarker && scene.aimZoom?.enabled && asset && (
                 <VideoAimZoomLayer
                   project={project}
                   scene={scene}
@@ -2006,22 +2156,38 @@ export const TrimStep = ({
               })()}
               {duration > 0 &&
                 project.scenes.flatMap((other) => {
-                  if (other.sceneKey === sceneKey || !other.clipId) return [];
-                  const source = project.clips.find((item) => item.id === other.clipId);
-                  if (!source || source.assetId !== asset.id) return [];
-                  const placement = timelineItems.find((item) => item.sceneKey === other.sceneKey);
-                  const sourceWindow = playedSourceWindow(source, placement);
-                  if (!sourceWindow) return [];
-                  return [
-                    <span
-                      key={other.sceneKey}
-                      className="is-other"
-                      style={{
-                        left: `${(sourceWindow.in / duration) * 100}%`,
-                        width: `${((sourceWindow.out - sourceWindow.in) / duration) * 100}%`,
-                      }}
-                    />,
-                  ];
+                  // ほかのシーンのカットと、このシーンの別のカットを青で出す
+                  const sources = isMultiCutScene(other.sceneKey)
+                    ? sceneCuts(project, other.sceneKey).map((cut) => ({
+                        source: cut.clip,
+                        placement:
+                          cut.cutId === PRIMARY_CUT_ID
+                            ? timelineItems.find((item) => item.sceneKey === other.sceneKey)
+                            : timelineItems.find((item) => item.clipId === cut.clip.id),
+                      }))
+                    : other.sceneKey === sceneKey
+                      ? []
+                      : [
+                          {
+                            source: project.clips.find((item) => item.id === other.clipId),
+                            placement: timelineItems.find((item) => item.sceneKey === other.sceneKey),
+                          },
+                        ];
+                  return sources.flatMap(({ source, placement }) => {
+                    if (!source || source.id === clip.id || source.assetId !== asset.id) return [];
+                    const sourceWindow = playedSourceWindow(source, placement);
+                    if (!sourceWindow) return [];
+                    return [
+                      <span
+                        key={`${other.sceneKey}-${source.id}`}
+                        className="is-other"
+                        style={{
+                          left: `${(sourceWindow.in / duration) * 100}%`,
+                          width: `${((sourceWindow.out - sourceWindow.in) / duration) * 100}%`,
+                        }}
+                      />,
+                    ];
+                  });
                 })}
               {duration > 0 && (
                 <button
@@ -2061,7 +2227,7 @@ export const TrimStep = ({
                     onPointerCancel={endRangeDrag}
                   />
                   <span className="is-head" style={{ left: `${(playhead / duration) * 100}%` }} />
-                  {scene.aimMarker?.enabled && (
+                  {showMarker && (
                     <span
                       className="is-marker"
                       title={`照準マーカー ${markerAt.toFixed(2)}秒`}
@@ -2073,7 +2239,11 @@ export const TrimStep = ({
             </div>
             <div className="gd-trim-scale">
               <span>{badgeClock(0)}</span>
-              <span>青：ほかのシーンで使った範囲　赤：このシーン</span>
+              <span>
+                {multiCut
+                  ? '青：ほかのシーン・カットで使った範囲　赤：このカット'
+                  : '青：ほかのシーンで使った範囲　赤：このシーン'}
+              </span>
               <span>{badgeClock(duration)}</span>
             </div>
           </div>
@@ -2098,7 +2268,7 @@ export const TrimStep = ({
               onChange={slideOut}
               onCommitFromPlayhead={() => slideOut(playhead)}
             />
-            <div className={lengthWarn ? 'gd-trim-length is-warn' : 'gd-trim-length'}>
+            <div className="gd-trim-length">
               <TrimTimeField
                 label="長さ（秒）"
                 value={length}
@@ -2107,11 +2277,6 @@ export const TrimStep = ({
                 step={0.1}
                 onChange={cutToSeconds}
               />
-              {length < copy.min
-                ? '目安より短い'
-                : length > copy.max
-                  ? '目安より長い'
-                  : null}
             </div>
             <span className="gd-spacer" />
             <button type="button" className="gd-nudge" aria-label="1フレーム戻る" onClick={() => seek(Math.max(0, playhead - frame))}>
@@ -2129,6 +2294,7 @@ export const TrimStep = ({
               このシーンの演出 <em>（{copy.title.split(' ')[0]} の初期値が入っています）</em>
             </strong>
             <div className="gd-trim-fx-row">
+              {multiCut && <span className="gd-cut-scope">縦型変換はこのシーン共通</span>}
               <div className="gd-seg" role="group" aria-label="縦型変換">
                 {(
                   [
@@ -2161,24 +2327,17 @@ export const TrimStep = ({
                   </button>
                 ))}
               </div>
-              {scene.layout916 === 'focus' && (
+              {scene.layout916 === 'focus' && cropScene && (
                 <label className="gd-focus-center">
-                  切り抜きの横位置
+                  {multiCut ? `切り抜きの横位置（カット${selectedIndex + 1}）` : '切り抜きの横位置'}
                   <input
                     type="range"
                     min={0}
                     max={1}
                     step={0.01}
                     aria-label="切り抜きの横位置"
-                    value={scene.cropCenterX}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterX = next;
-                        return current;
-                      });
-                    }}
+                    value={cropScene.cropCenterX}
+                    onChange={(event) => setCrop({ cropCenterX: Number(event.target.value) })}
                   />
                   <input
                     type="number"
@@ -2186,49 +2345,29 @@ export const TrimStep = ({
                     max={1}
                     step={0.01}
                     aria-label="切り抜きの横位置の数値"
-                    value={Number(scene.cropCenterX.toFixed(2))}
+                    value={Number(cropScene.cropCenterX.toFixed(2))}
                     onChange={(event) => {
                       const next = Number(event.target.value);
                       if (!Number.isFinite(next)) return;
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterX = Math.min(1, Math.max(0, next));
-                        return current;
-                      });
+                      setCrop({ cropCenterX: Math.min(1, Math.max(0, next)) });
                     }}
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterX = 0.5;
-                        return current;
-                      })
-                    }
-                  >
+                  <button type="button" onClick={() => setCrop({ cropCenterX: 0.5 })}>
                     中央に戻す
                   </button>
                 </label>
               )}
-              {scene.layout916 === 'focus' && (
+              {scene.layout916 === 'focus' && cropScene && (
                 <label className="gd-focus-center">
-                  切り抜きの縦位置
+                  {multiCut ? `切り抜きの縦位置（カット${selectedIndex + 1}）` : '切り抜きの縦位置'}
                   <input
                     type="range"
                     min={0}
                     max={1}
                     step={0.01}
                     aria-label="切り抜きの縦位置"
-                    value={focusCropCenterYOf(scene)}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterY = next;
-                        return current;
-                      });
-                    }}
+                    value={focusCropCenterYOf(cropScene)}
+                    onChange={(event) => setCrop({ cropCenterY: Number(event.target.value) })}
                   />
                   <input
                     type="number"
@@ -2236,140 +2375,126 @@ export const TrimStep = ({
                     max={1}
                     step={0.01}
                     aria-label="切り抜きの縦位置の数値"
-                    value={Number(focusCropCenterYOf(scene).toFixed(2))}
+                    value={Number(focusCropCenterYOf(cropScene).toFixed(2))}
                     onChange={(event) => {
                       const next = Number(event.target.value);
                       if (!Number.isFinite(next)) return;
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterY = Math.min(1, Math.max(0, next));
-                        return current;
-                      });
+                      setCrop({ cropCenterY: Math.min(1, Math.max(0, next)) });
                     }}
                   />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target) target.cropCenterY = 0.5;
-                        return current;
-                      })
-                    }
-                  >
+                  <button type="button" onClick={() => setCrop({ cropCenterY: 0.5 })}>
                     中央に戻す
                   </button>
                 </label>
               )}
-              {scene.layout916 === 'focus' && (
+              {scene.layout916 === 'focus' && cropScene && (
                 <TrimTimeField
                   label="拡大率"
-                  value={focusCropZoomOf(scene)}
+                  value={focusCropZoomOf(cropScene)}
                   min={FOCUS_CROP_ZOOM.min}
                   max={FOCUS_CROP_ZOOM.max}
                   step={FOCUS_CROP_ZOOM.step}
-                  onChange={(next) => {
-                    const cropZoom = roundFocusZoom(next);
-                    update((current) => {
-                      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                      if (target) target.cropZoom = cropZoom;
-                      return current;
-                    });
-                  }}
+                  onChange={(next) => setCrop({ cropZoom: roundFocusZoom(next) })}
                 />
               )}
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(scene.zoom?.enabled)}
-                  onChange={(event) =>
-                    update((current) => {
-                      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                      if (!target) return current;
-                      target.zoom = {
-                        enabled: event.target.checked,
-                        from: target.zoom?.from ?? 1,
-                        to: target.zoom?.to ?? 1.15,
-                        x: target.zoom?.x ?? 0.5,
-                        y: target.zoom?.y ?? 0.5,
-                      };
-                      return current;
-                    })
-                  }
-                />
-                ズーム
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(scene.freeze?.enabled)}
-                  onChange={(event) =>
-                    update((current) => {
-                      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                      if (!target) return current;
-                      target.freeze = {
-                        enabled: event.target.checked,
-                        at: target.freeze?.at ?? 1,
-                        duration: target.freeze?.duration ?? 1,
-                      };
-                      return current;
-                    })
-                  }
-                />
-                フリーズ
-              </label>
-              {scene.freeze?.enabled && (
-                <span className="gd-freeze-read">
-                  +
-                  <input
-                    type="number"
-                    step={0.1}
-                    aria-label="フリーズ開始"
-                    value={scene.freeze.at}
-                    onChange={(event) =>
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target?.freeze) target.freeze.at = Number(event.target.value);
-                        return current;
-                      })
-                    }
-                  />
-                  s から
-                  <input
-                    type="number"
-                    step={0.1}
-                    aria-label="フリーズの長さ"
-                    value={scene.freeze.duration}
-                    onChange={(event) =>
-                      update((current) => {
-                        const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                        if (target?.freeze) target.freeze.duration = Number(event.target.value);
-                        return current;
-                      })
-                    }
-                  />
-                  s
-                </span>
+              {editingExtra ? (
+                <span className="gd-cut-scope">ズーム・フリーズ・照準マーカーはカット1で設定します</span>
+              ) : (
+                <>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(scene.zoom?.enabled)}
+                      onChange={(event) =>
+                        update((current) => {
+                          const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                          if (!target) return current;
+                          target.zoom = {
+                            enabled: event.target.checked,
+                            from: target.zoom?.from ?? 1,
+                            to: target.zoom?.to ?? 1.15,
+                            x: target.zoom?.x ?? 0.5,
+                            y: target.zoom?.y ?? 0.5,
+                          };
+                          return current;
+                        })
+                      }
+                    />
+                    ズーム
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(scene.freeze?.enabled)}
+                      onChange={(event) =>
+                        update((current) => {
+                          const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                          if (!target) return current;
+                          target.freeze = {
+                            enabled: event.target.checked,
+                            at: target.freeze?.at ?? 1,
+                            duration: target.freeze?.duration ?? 1,
+                          };
+                          return current;
+                        })
+                      }
+                    />
+                    フリーズ
+                  </label>
+                  {scene.freeze?.enabled && (
+                    <span className="gd-freeze-read">
+                      +
+                      <input
+                        type="number"
+                        step={0.1}
+                        aria-label="フリーズ開始"
+                        value={scene.freeze.at}
+                        onChange={(event) =>
+                          update((current) => {
+                            const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                            if (target?.freeze) target.freeze.at = Number(event.target.value);
+                            return current;
+                          })
+                        }
+                      />
+                      s から
+                      <input
+                        type="number"
+                        step={0.1}
+                        aria-label="フリーズの長さ"
+                        value={scene.freeze.duration}
+                        onChange={(event) =>
+                          update((current) => {
+                            const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                            if (target?.freeze) target.freeze.duration = Number(event.target.value);
+                            return current;
+                          })
+                        }
+                      />
+                      s
+                    </span>
+                  )}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(scene.aimMarker?.enabled)}
+                      onChange={(event) =>
+                        update((current) => {
+                          const target = current.scenes.find((item) => item.sceneKey === sceneKey);
+                          if (!target) return current;
+                          target.aimMarker = withAimMarker(target.aimMarker, {
+                            enabled: event.target.checked,
+                          });
+                          return current;
+                        })
+                      }
+                    />
+                    照準マーカー
+                  </label>
+                </>
               )}
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(scene.aimMarker?.enabled)}
-                  onChange={(event) =>
-                    update((current) => {
-                      const target = current.scenes.find((item) => item.sceneKey === sceneKey);
-                      if (!target) return current;
-                      target.aimMarker = withAimMarker(target.aimMarker, {
-                        enabled: event.target.checked,
-                      });
-                      return current;
-                    })
-                  }
-                />
-                照準マーカー
-              </label>
             </div>
-            {scene.aimMarker?.enabled && (
+            {showMarker && scene.aimMarker && (
               <div className="gd-marker-controls">
                 <div className="gd-marker-axes">
                   <MarkerAxisControl axis="x" value={scene.aimMarker.x} onChange={(value) => setMarkerAxis('x', value)} />
@@ -4626,7 +4751,7 @@ export const ReviewStep = ({
 }: {
   project: Project;
   tracks: AudioTrack[];
-  onGoto: (step: GuideStepId) => void;
+  onGoto: (step: GuideStepId, sceneKey?: SceneKey) => void;
   onGate: (gate: () => void) => void;
 }) => {
   const items = reviewItems(project, tracks);
@@ -4870,7 +4995,7 @@ export const ReviewStep = ({
                   <span className="gd-review-detail">{item.detail}</span>
                 </span>
                 {item.step && item.level !== 'ok' && item.level !== 'info' && (
-                  <button type="button" className="gd-link" onClick={() => onGoto(item.step!)}>
+                  <button type="button" className="gd-link" onClick={() => onGoto(item.step!, item.sceneKey)}>
                     {guideStepNumber(item.step)} {FIX_STEP[item.step] ?? ''}で直す
                   </button>
                 )}
