@@ -652,7 +652,12 @@ const Caption = ({
         })
       : 1;
   const styles: Record<typeof kind, CSSProperties> = {
-    hook: { top: 230, fontSize: 88, lineHeight: 1.4, textAlign: 'center' },
+    hook: {
+      top: LAYOUT_FOCUS.hookCaption.top,
+      fontSize: LAYOUT_FOCUS.hookCaption.fontSize,
+      lineHeight: LAYOUT_FOCUS.hookCaption.lineHeight,
+      textAlign: 'center',
+    },
     step: { top: 1240, fontSize: 60, lineHeight: 1.12, textAlign: 'left' },
     throw: {
       top: 1260,
@@ -665,7 +670,7 @@ const Caption = ({
   };
   const floating = kind !== 'throw';
   // HOOK はセーフゾーン幅に縛らず、画面（1080）中央に置く
-  const box = kind === 'hook' ? { left: 0, width: 1080 } : { left: 72, width: 840 };
+  const box = kind === 'hook' ? { left: 0, width: LAYOUT_FOCUS.hookCaption.width } : { left: 72, width: 840 };
   return (
     <div
       style={{

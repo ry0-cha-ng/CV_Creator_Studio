@@ -187,11 +187,33 @@ if (Math.round(sample.x) !== 578 || sample.y !== 0 || Math.round(sample.w) !== 1
 
 if (THUMB_FOCUS.hook.maxLines !== 3) fail('focus hook allows 3 lines');
 const fitted = fitFocusHook('Flush them out before the retake', 'en');
-if (fitted.warning || fitted.lines.length !== 3 || fitted.fontSize !== 96) {
-  fail(`english fit ${fitted.fontSize} ${fitted.lines.length} ${fitted.warning}`);
+if (fitted.warning || fitted.lines.length !== 2 || fitted.fontSize >= THUMB_FOCUS.hook.en.size) {
+  fail(`english fit should stay on the video's 2 lines ${fitted.fontSize} ${fitted.lines.length} ${fitted.warning}`);
+}
+const duel = fitFocusHook('STOP THE DEFUSE.\n[SKIP THE DUEL.]', 'en');
+const duelText = duel.lines.map((line) => line.map((run) => run.text).join(''));
+if (
+  duel.warning ||
+  duelText.length !== 2 ||
+  duelText[0] !== 'STOP THE DEFUSE.' ||
+  duelText[1] !== 'SKIP THE DUEL.'
+) {
+  fail(`video-sized english hook wrapped ${duel.fontSize} ${duelText.join('|')}`);
+}
+const shortEn = fitFocusHook('BURN IT', 'en');
+if (shortEn.fontSize !== THUMB_FOCUS.hook.en.size || shortEn.lines.length !== 1) {
+  fail(`short english should stay large ${shortEn.fontSize} ${shortEn.lines.length}`);
+}
+const fullVideoLine = fitFocusHook('M'.repeat(12), 'en');
+if (fullVideoLine.warning || fullVideoLine.lines.length !== 1) {
+  fail(`a line that fills the video wrapped on the thumbnail ${fullVideoLine.fontSize} ${fullVideoLine.lines.length}`);
+}
+const jaVideoLine = fitFocusHook('リテイクはこれで決まる', 'ja');
+if (jaVideoLine.warning || jaVideoLine.lines.length !== 1) {
+  fail(`japanese video line wrapped ${jaVideoLine.fontSize} ${jaVideoLine.lines.length}`);
 }
 const overflowing = fitFocusHook(`${'BURN THE SITE FROM THIS LINEUP '.repeat(8)}NOW`, 'en');
-if (!overflowing.warning || overflowing.fontSize !== 76 || overflowing.lines.length !== 3) {
+if (!overflowing.warning || overflowing.fontSize !== THUMB_FOCUS.hook.en.min || overflowing.lines.length !== 3) {
   fail(`overflow ${overflowing.fontSize} ${overflowing.lines.length} ${overflowing.warning}`);
 }
 const explicit = fitFocusHook("See them?\nBurn it.", 'en');

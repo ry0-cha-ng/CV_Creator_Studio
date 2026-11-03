@@ -46,12 +46,29 @@ const EDITABLE_SCENES: SceneKey[] = ['hook', 'stand', 'aim', 'throw', 'demo'];
 const CARD_STILL_ROLES = ['stand', 'aim', 'result'] as const;
 type CardStillRole = (typeof CARD_STILL_ROLES)[number];
 
+/** 最後の編集からこの間なにも変わらなければ、自動保存を始める。 */
+const AUTOSAVE_IDLE_MS = 500;
+const AUTOSAVE_BACKUP_MS = 30_000;
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const persistProject = async (revision: number, sent: Project): Promise<SaveCommit> => {
-  const saved = await window.studio.saveProject(sent);
-  return useStudioStore.getState().acceptSavedProject(revision, sent, saved);
+let persistTail: Promise<void> = Promise.resolve();
+
+const persistProject = (revision: number, sent: Project): Promise<SaveCommit> => {
+  const run = persistTail.then(async () => {
+    const state = useStudioStore.getState();
+    // 同じプロジェクトの新しい編集が来ているときは、古いスナップショットを書かない。
+    // 別プロジェクトへ移ったあとは、離れる前の内容をまだ書く。
+    if (state.project?.id === sent.id && state.projectRevision !== revision) return 'stale';
+    const saved = await window.studio.saveProject(sent);
+    return useStudioStore.getState().acceptSavedProject(revision, sent, saved);
+  });
+  persistTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 };
 
 const mediaUrl = (path: string): string =>
@@ -75,6 +92,11 @@ export const App = () => {
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [guideScene, setGuideScene] = useState<SceneKey>('hook');
   const playbackFrameRef = useRef(0);
+  const saveTimerRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef(false);
+  const lastChangeAtRef = useRef(0);
+  const autosaveMountedRef = useRef(true);
+  const scheduleAutosaveRef = useRef<() => void>(() => undefined);
   const [audioUsage, setAudioUsage] = useState<AudioUsageRecord[]>([]);
   const [defaultBgmTrackId, setDefaultBgmTrackId] = useState<string | null>(null);
   const [area, setArea] = useState<'create' | 'review' | 'detail'>('create');
@@ -125,35 +147,73 @@ export const App = () => {
     })();
   }, [workspace]);
 
+  const clearAutosaveTimer = (): void => {
+    if (saveTimerRef.current != null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  };
+
+  const runAutosave = async (): Promise<void> => {
+    if (saveInFlightRef.current) return;
+    const state = useStudioStore.getState();
+    const toSave = state.project;
+    if (!toSave || !state.dirty) return;
+    if (Date.now() - lastChangeAtRef.current < AUTOSAVE_IDLE_MS - 50) {
+      scheduleAutosaveRef.current();
+      return;
+    }
+    const revision = state.projectRevision;
+    saveInFlightRef.current = true;
+    try {
+      const result = await persistProject(revision, toSave);
+      if (result === 'saved') await refreshProjects();
+    } catch (saveError) {
+      useStudioStore.getState().setError(`自動保存に失敗しました: ${errorMessage(saveError)}`);
+    } finally {
+      saveInFlightRef.current = false;
+      if (!autosaveMountedRef.current) return;
+      const latest = useStudioStore.getState();
+      if (latest.dirty && latest.project && latest.projectRevision !== revision) {
+        scheduleAutosaveRef.current();
+      }
+    }
+  };
+
+  const scheduleAutosave = (): void => {
+    clearAutosaveTimer();
+    const wait = Math.max(0, AUTOSAVE_IDLE_MS - (Date.now() - lastChangeAtRef.current));
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void runAutosave();
+    }, wait);
+  };
+  scheduleAutosaveRef.current = scheduleAutosave;
+
+  useEffect(() => {
+    autosaveMountedRef.current = true;
+    return () => {
+      autosaveMountedRef.current = false;
+      clearAutosaveTimer();
+    };
+  }, []);
+
   useEffect(() => {
     if (!project || !dirty) return;
-    const revision = useStudioStore.getState().projectRevision;
-    const timer = window.setTimeout(async () => {
-      const state = useStudioStore.getState();
-      const toSave = state.project;
-      if (!toSave || state.projectRevision !== revision) return;
-      try {
-        const result = await persistProject(revision, toSave);
-        if (result === 'saved') await refreshProjects();
-      } catch (saveError) {
-        useStudioStore.getState().setError(`自動保存に失敗しました: ${errorMessage(saveError)}`);
-      }
-    }, 700);
-    return () => window.clearTimeout(timer);
+    lastChangeAtRef.current = Date.now();
+    scheduleAutosaveRef.current();
+    return () => {
+      clearAutosaveTimer();
+    };
   }, [project, dirty]);
 
   useEffect(() => {
-    const timer = window.setInterval(async () => {
+    const timer = window.setInterval(() => {
       const state = useStudioStore.getState();
-      const toSave = state.project;
-      if (!toSave || !state.dirty) return;
-      const revision = state.projectRevision;
-      try {
-        await persistProject(revision, toSave);
-      } catch (saveError) {
-        useStudioStore.getState().setError(`定期保存に失敗しました: ${errorMessage(saveError)}`);
-      }
-    }, 30_000);
+      if (!state.project || !state.dirty) return;
+      if (saveInFlightRef.current || saveTimerRef.current != null) return;
+      scheduleAutosaveRef.current();
+    }, AUTOSAVE_BACKUP_MS);
     return () => window.clearInterval(timer);
   }, []);
 
